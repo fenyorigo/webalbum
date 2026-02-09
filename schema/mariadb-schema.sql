@@ -1,0 +1,2 @@
+-- Placeholder MariaDB schema for users + saved_queries + query_runs
+-- Define tables when backend persistence is added.

@@ -1,0 +1,32 @@
+CREATE TABLE IF NOT EXISTS wa_users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  username VARCHAR(64) NOT NULL UNIQUE,
+  display_name VARCHAR(128) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  is_active TINYINT(1) NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS wa_tag_prefs_global (
+  tag VARCHAR(255) PRIMARY KEY,
+  is_noise TINYINT(1) NOT NULL DEFAULT 0,
+  pinned  TINYINT(1) NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS wa_tag_prefs_user (
+  user_id INT NOT NULL,
+  tag VARCHAR(255) NOT NULL,
+  is_noise TINYINT(1) NULL,
+  is_hidden TINYINT(1) NOT NULL DEFAULT 0,
+  pinned TINYINT(1) NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, tag),
+  CONSTRAINT fk_prefs_user FOREIGN KEY (user_id) REFERENCES wa_users(id) ON DELETE CASCADE
+);
+
+INSERT INTO wa_tag_prefs_global (tag, is_noise, pinned)
+SELECT tag, is_noise, pinned
+FROM wa_tag_prefs
+ON DUPLICATE KEY UPDATE
+  is_noise = VALUES(is_noise),
+  pinned = VALUES(pinned);
