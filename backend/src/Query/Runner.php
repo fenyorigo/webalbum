@@ -15,15 +15,37 @@ final class Runner
         $this->db = $db;
     }
 
-    public function run(array $query): array
+    public function run(array $query, ?array $restrictIds = null): array
     {
         [$whereSql, $params] = Compiler::compileWhere($query["where"]);
 
-        $countSql = "SELECT COUNT(*) AS c FROM files WHERE " . $whereSql;
-        $countRow = $this->db->query($countSql, $params);
+        $idClause = "";
+        if (is_array($restrictIds)) {
+            if ($restrictIds === []) {
+                return [
+                    "sql" => "",
+                    "params" => [],
+                    "rows" => [],
+                    "total" => 0,
+                ];
+            }
+            $placeholders = implode(",", array_fill(0, count($restrictIds), "?"));
+            $idClause = " AND files.id IN (" . $placeholders . ")";
+        }
+
+        $countSql = "SELECT COUNT(*) AS c FROM files WHERE " . $whereSql . $idClause;
+        $countParams = $params;
+        if ($restrictIds) {
+            $countParams = array_merge($countParams, $restrictIds);
+        }
+        $countRow = $this->db->query($countSql, $countParams);
         $total = $countRow !== [] ? (int)$countRow[0]["c"] : 0;
 
-        $sql = "SELECT id, path, taken_ts, type FROM files WHERE " . $whereSql;
+        $sql = "SELECT id, path, taken_ts, type FROM files WHERE " . $whereSql . $idClause;
+        $queryParams = $params;
+        if ($restrictIds) {
+            $queryParams = array_merge($queryParams, $restrictIds);
+        }
 
         if ($query["sort"]) {
             $field = $query["sort"]["field"];
@@ -37,11 +59,11 @@ final class Runner
             $sql .= " OFFSET " . (int)$query["offset"];
         }
 
-        $rows = $this->db->query($sql, $params);
+        $rows = $this->db->query($sql, $queryParams);
 
         return [
             "sql" => $sql,
-            "params" => $params,
+            "params" => $queryParams,
             "rows" => $rows,
             "total" => $total,
         ];

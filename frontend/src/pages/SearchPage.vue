@@ -6,6 +6,13 @@
     </header>
 
     <section class="panel">
+      <div v-if="loadedSearchName" class="loaded-indicator">
+        <span>Loaded: {{ loadedSearchName }}</span>
+        <span v-if="isModified" class="pill">Modified</span>
+        <button v-if="isModified" class="inline" type="button" @click="resetToLoaded">
+          Reset to loaded
+        </button>
+      </div>
       <div class="row">
         <label class="tags">
           Tags
@@ -98,12 +105,25 @@
           </select>
         </label>
         <label>
+          <span>Only favorites</span>
+          <input v-model="form.onlyFavorites" type="checkbox" :disabled="!canFavorite" />
+        </label>
+        <label>
           Limit
           <input v-model.number="form.limit" type="number" min="1" max="1000" />
+        </label>
+        <label>
+          View
+          <select v-model="viewMode">
+            <option value="list">List</option>
+            <option value="grid">Grid</option>
+          </select>
         </label>
       </div>
       <div class="row actions">
         <button @click="runSearch" :disabled="loading">Search</button>
+        <button @click="openSaveModal" :disabled="loading">Save search</button>
+        <button @click="clearCriteria" :disabled="loading">Clear search criteria</button>
         <label class="checkbox">
           <input type="checkbox" v-model="debug" />
           Debug SQL
@@ -116,9 +136,26 @@
       <div class="meta">
         <span v-if="loading">Loading…</span>
         <span v-else-if="total === null">Results: —</span>
-        <span v-else>Results: {{ results.length }} of {{ total }}</span>
+        <span v-else>Results: {{ results.length }} of {{ total }} ({{ total }} images)</span>
+        <span v-if="savedBanner" class="pill">{{ savedBanner }}</span>
       </div>
-      <div class="pager" v-if="total !== null">
+      <div class="view-toggle">
+        <button
+          type="button"
+          :class="{ active: viewMode === 'list' }"
+          @click="viewMode = 'list'"
+        >
+          List
+        </button>
+        <button
+          type="button"
+          :class="{ active: viewMode === 'grid' }"
+          @click="viewMode = 'grid'"
+        >
+          Grid
+        </button>
+      </div>
+      <div class="pager" v-if="total !== null && total > (form.limit || 50)">
         <button :disabled="page === 1 || loading" @click="prevPage">Previous</button>
         <span>Page {{ page }} of {{ totalPages }}</span>
         <input
@@ -130,15 +167,75 @@
         />
         <button :disabled="loading" @click="jumpToPage">Go</button>
         <button :disabled="page >= totalPages || loading" @click="nextPage">Next</button>
+        <button
+          class="download"
+          :disabled="loading || selectedIds.length === 0 || selectedIds.length > 20"
+          @click="downloadSelected"
+        >
+          Download selected ({{ selectedIds.length }})
+        </button>
+        <span class="note">Max 20 images per ZIP</span>
+        <button
+          v-if="selectedIds.length"
+          class="clear"
+          type="button"
+          @click="clearSelection"
+        >
+          Unselect all
+        </button>
       </div>
-      <ul>
-        <li v-for="row in results" :key="row.id">
-          <code>{{ row.path }}</code>
-          <span class="pill">{{ row.type }}</span>
-          <span v-if="row.taken_ts" class="ts">{{ formatTs(row.taken_ts) }}</span>
-        </li>
-      </ul>
-      <div class="pager" v-if="total !== null">
+      <results-list
+        v-if="viewMode === 'list'"
+        :items="results"
+        :offset="offset"
+        :selected-ids="selectedIds"
+        :can-favorite="canFavorite"
+        :file-url="fileUrl"
+        :thumb-url="thumbUrl"
+        :format-ts="formatTs"
+        :copy-link="copyLink"
+        :file-name="fileName"
+        @open="openViewer"
+        @toggle-favorite="toggleFavorite"
+        @update:selected-ids="selectedIds = $event"
+      />
+      <results-grid
+        v-else
+        :items="results"
+        :offset="offset"
+        :selected-ids="selectedIds"
+        :can-favorite="canFavorite"
+        :file-url="fileUrl"
+        :thumb-url="thumbUrl"
+        :format-ts="formatTs"
+        :copy-link="copyLink"
+        :file-name="fileName"
+        @open="openViewer"
+        @toggle-favorite="toggleFavorite"
+        @update:selected-ids="selectedIds = $event"
+      />
+      <div
+        class="pager"
+        v-if="total !== null && total <= (form.limit || 50)"
+      >
+        <button
+          class="download"
+          :disabled="loading || selectedIds.length === 0 || selectedIds.length > 20"
+          @click="downloadSelected"
+        >
+          Download selected ({{ selectedIds.length }})
+        </button>
+        <span class="note">Max 20 images per ZIP</span>
+        <button
+          v-if="selectedIds.length"
+          class="clear"
+          type="button"
+          @click="clearSelection"
+        >
+          Unselect all
+        </button>
+      </div>
+      <div class="pager" v-if="total !== null && total > (form.limit || 50)">
         <button :disabled="page === 1 || loading" @click="prevPage">Previous</button>
         <span>Page {{ page }} of {{ totalPages }}</span>
         <input
@@ -150,15 +247,60 @@
         />
         <button :disabled="loading" @click="jumpToPage">Go</button>
         <button :disabled="page >= totalPages || loading" @click="nextPage">Next</button>
+        <button
+          class="download"
+          :disabled="loading || selectedIds.length === 0 || selectedIds.length > 20"
+          @click="downloadSelected"
+        >
+          Download selected ({{ selectedIds.length }})
+        </button>
+        <span class="note">Max 20 images per ZIP</span>
       </div>
       <pre v-if="debugInfo" class="debug">{{ debugInfo }}</pre>
     </section>
+    <image-viewer
+      :results="results"
+      :start-id="viewerStartId"
+      :is-open="viewerOpen"
+      :file-url="fileUrl"
+      @close="closeViewer"
+    />
+    <div v-if="saveOpen" class="modal-backdrop" @click.self="closeSaveModal">
+      <div class="modal">
+        <h3>Save search</h3>
+        <label>
+          Name
+          <input v-model.trim="saveName" type="text" />
+        </label>
+        <div class="modal-actions">
+          <button class="inline" @click="submitSave(false)" :disabled="loading">Save</button>
+          <button class="inline" @click="closeSaveModal" :disabled="loading">Cancel</button>
+        </div>
+        <p v-if="saveError" class="error">{{ saveError }}</p>
+      </div>
+    </div>
+    <div v-if="replaceOpen" class="modal-backdrop" @click.self="closeReplaceModal">
+      <div class="modal">
+        <h3>Replace saved search?</h3>
+        <p>A saved search with this name already exists. Replace it?</p>
+        <div class="modal-actions">
+          <button class="inline" @click="submitSave(true)" :disabled="loading">Replace</button>
+          <button class="inline" @click="closeReplaceModal" :disabled="loading">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div v-if="toast" class="toast">{{ toast }}</div>
   </div>
 </template>
 
 <script>
+import ResultsGrid from "../components/ResultsGrid.vue";
+import ResultsList from "../components/ResultsList.vue";
+import ImageViewer from "../components/ImageViewer.vue";
+
 export default {
   name: "SearchPage",
+  components: { ResultsGrid, ResultsList, ImageViewer },
   data() {
     return {
       loading: false,
@@ -167,6 +309,8 @@ export default {
       debugInfo: "",
       results: [],
       total: null,
+      offset: 0,
+      limit: 50,
       form: {
         tags: [{ value: "", mode: "include" }],
         tagMode: "ALL",
@@ -176,26 +320,201 @@ export default {
         start: "",
         end: "",
         type: "image",
+        onlyFavorites: false,
         sortField: "path",
         sortDir: "asc",
-        limit: 200
+        limit: 50
       },
       page: 1,
       pageInput: null,
       activeTagIndex: null,
       suggestions: [],
-      suggestTimer: null
+      suggestTimer: null,
+      selectedIds: [],
+      toast: "",
+      viewMode: "list",
+      viewerOpen: false,
+      viewerStartId: 0,
+      currentUser: null,
+      saveOpen: false,
+      replaceOpen: false,
+      saveName: "",
+      saveError: "",
+      savedBanner: "",
+      suspendAuto: false,
+      loadedSearchId: null,
+      loadedSearchName: "",
+      loadedQuery: null,
+      loadedSnapshot: ""
     };
   },
+  mounted() {
+    const prefs = window.__wa_prefs || null;
+    this.applyPrefs(prefs);
+    if (!prefs) {
+      this.viewMode = window.matchMedia("(min-width: 1024px)").matches ? "grid" : "list";
+    }
+    this.currentUser = window.__wa_current_user || null;
+    this.applyLoadFromRoute();
+    window.addEventListener("wa-auth-changed", this.onUserChanged);
+    window.addEventListener("wa-prefs-changed", this.onPrefsChanged);
+  },
+  beforeUnmount() {
+    window.removeEventListener("wa-auth-changed", this.onUserChanged);
+    window.removeEventListener("wa-prefs-changed", this.onPrefsChanged);
+  },
   methods: {
-    buildQuery() {
-      const items = [];
-      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
-      const normalizeDate = (value) =>
-        value
-          .trim()
-          .replace(/[\u2010-\u2015\u2212]/g, "-");
+    onUserChanged(event) {
+      this.currentUser = event.detail || null;
+    },
+    onPrefsChanged(event) {
+      this.applyPrefs(event.detail || null);
+    },
+    applyPrefs(prefs) {
+      if (!prefs) {
+        return;
+      }
+      this.suspendAuto = true;
+      this.form.limit = prefs.page_size || 50;
+      this.viewMode = prefs.default_view || "grid";
+      const sort = prefs.sort_mode || "name_az";
+      if (sort === "name_az") {
+        this.form.sortField = "path";
+        this.form.sortDir = "asc";
+      } else if (sort === "name_za") {
+        this.form.sortField = "path";
+        this.form.sortDir = "desc";
+      } else if (sort === "date_new_old") {
+        this.form.sortField = "taken";
+        this.form.sortDir = "asc";
+      } else if (sort === "date_old_new") {
+        this.form.sortField = "taken";
+        this.form.sortDir = "desc";
+      }
+      this.suspendAuto = false;
+    },
+    applyLoadFromRoute() {
+      const loadId = this.$route?.query?.load;
+      if (!loadId) {
+        return;
+      }
+      const autoRun = this.$route?.query?.run === "1";
+      this.fetchSavedSearch(loadId, autoRun);
+    },
+    async fetchSavedSearch(id, autoRun) {
+      try {
+        const res = await fetch(`/api/saved-searches/${id}`);
+        if (this.handleAuthError(res)) {
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          this.showToast(data.error || "Failed to load saved search");
+          return;
+        }
+        const query = data.query_json || data.query;
+        if (!query || typeof query !== "object") {
+          this.showToast("Saved search is invalid");
+          return;
+        }
+        this.applyQuery(query, data.name || "", { autoRun, id: data.id });
+      } catch (err) {
+        this.showToast("Failed to load saved search");
+      }
+    },
+    applyQuery(query, name, options = {}) {
+      const { form, page, pageInput } = this.builderFromQuery(query);
+      this.suspendAuto = true;
+      this.form = form;
+      this.page = page;
+      this.pageInput = pageInput;
+      this.activeTagIndex = null;
+      this.suggestions = [];
+      this.suspendAuto = false;
+      this.loadedSearchId = options.id || null;
+      this.loadedSearchName = name || "";
+      this.loadedQuery = JSON.parse(JSON.stringify(query));
+      this.loadedSnapshot = this.snapshotFromQuery(this.loadedQuery);
+      this.savedBanner = name ? `Loaded from saved search: ${name}` : "";
+      if (options.autoRun) {
+        this.$nextTick(() => {
+          this.runSearch();
+        });
+      }
+    },
+    builderFromQuery(query) {
+      const where = query.where && typeof query.where === "object" ? query.where : {};
+      const builder = this.builderFromWhere(where);
+      builder.form.sortField = query.sort && query.sort.field ? query.sort.field : "path";
+      builder.form.sortDir = query.sort && query.sort.dir ? query.sort.dir : "asc";
+      builder.form.limit = Number.isFinite(query.limit) ? query.limit : 50;
+      const limit = builder.form.limit || 50;
+      const offset = Number.isFinite(query.offset) ? query.offset : 0;
+      builder.page = Math.floor(offset / limit) + 1;
+      builder.pageInput = builder.page;
+      return builder;
+    },
+    builderFromWhere(where) {
+      const items = Array.isArray(where.items) ? where.items : [];
+      const includeGroup = items.find(
+        (item) =>
+          item &&
+          item.group &&
+          Array.isArray(item.items) &&
+          item.items.every(
+            (rule) => rule && rule.field === "tag" && rule.op === "is" && typeof rule.value === "string"
+          )
+      );
+      const includeTags = includeGroup ? includeGroup.items.map((rule) => rule.value) : [];
+      const excludeTags = items
+        .filter(
+          (item) =>
+            item &&
+            item.field === "tag" &&
+            item.op === "is_not" &&
+            typeof item.value === "string"
+        )
+        .map((item) => item.value);
+      const pathItem = items.find((item) => item && item.field === "path");
+      const typeItem = items.find((item) => item && item.field === "type" && item.op === "is");
+      const takenItem = items.find((item) => item && item.field === "taken");
 
+      const form = {
+        tags: [],
+        tagMode: includeGroup && includeGroup.group === "ANY" ? "ANY" : "ALL",
+        path: pathItem && typeof pathItem.value === "string" ? pathItem.value : "",
+        dateOp: "after",
+        date: "",
+        start: "",
+        end: "",
+        type: typeItem && typeof typeItem.value === "string" ? typeItem.value : "",
+        onlyFavorites: !!where.only_favorites,
+        sortField: "path",
+        sortDir: "asc",
+        limit: 50
+      };
+
+      includeTags.forEach((tag) => form.tags.push({ value: tag, mode: "include" }));
+      excludeTags.forEach((tag) => form.tags.push({ value: tag, mode: "exclude" }));
+      if (form.tags.length === 0) {
+        form.tags = [{ value: "", mode: "include" }];
+      }
+
+      if (takenItem && typeof takenItem.op === "string") {
+        if (takenItem.op === "between" && Array.isArray(takenItem.value)) {
+          form.dateOp = "between";
+          form.start = takenItem.value[0] || "";
+          form.end = takenItem.value[1] || "";
+        } else if (typeof takenItem.value === "string") {
+          form.dateOp = takenItem.op;
+          form.date = takenItem.value;
+        }
+      }
+
+      return { form, page: 1, pageInput: 1 };
+    },
+    whereFromBuilder() {
+      const items = [];
       const includeTags = this.form.tags
         .filter((t) => t.mode === "include")
         .map((t) => t.value.trim())
@@ -221,6 +540,57 @@ export default {
       }
       if (this.form.dateOp === "between") {
         if (this.form.start && this.form.end) {
+          items.push({
+            field: "taken",
+            op: "between",
+            value: [this.form.start, this.form.end]
+          });
+        }
+      } else if (this.form.date) {
+        items.push({ field: "taken", op: this.form.dateOp, value: this.form.date });
+      }
+      if (this.form.type) {
+        items.push({ field: "type", op: "is", value: this.form.type });
+      }
+
+      return {
+        group: "ALL",
+        items: items.length ? items : [{ field: "type", op: "is", value: "image" }],
+        only_favorites: this.form.onlyFavorites
+      };
+    },
+    snapshotFromQuery(query) {
+      const snapshot = {
+        where: query.where || {},
+        sort: query.sort || {},
+        limit: Number.isFinite(query.limit) ? query.limit : 50
+      };
+      return JSON.stringify(snapshot);
+    },
+    snapshotFromBuilder() {
+      const query = {
+        where: this.whereFromBuilder(),
+        sort: { field: this.form.sortField, dir: this.form.sortDir },
+        limit: this.form.limit || 50
+      };
+      return this.snapshotFromQuery(query);
+    },
+    resetToLoaded() {
+      if (!this.loadedQuery) {
+        return;
+      }
+      this.applyQuery(this.loadedQuery, this.loadedSearchName, { autoRun: false });
+    },
+    buildQuery() {
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+      const normalizeDate = (value) =>
+        value
+          .trim()
+          .replace(/[\u2010-\u2015\u2212]/g, "-");
+
+      const where = this.whereFromBuilder();
+      if (this.form.dateOp === "between") {
+        if (this.form.start && this.form.end) {
           const start = normalizeDate(this.form.start);
           const end = normalizeDate(this.form.end);
           this.form.start = start;
@@ -229,11 +599,8 @@ export default {
             this.error = "Date must be YYYY-MM-DD";
             return null;
           }
-          items.push({
-            field: "taken",
-            op: "between",
-            value: [start, end]
-          });
+          where.items = where.items.filter((item) => item.field !== "taken");
+          where.items.push({ field: "taken", op: "between", value: [start, end] });
         }
       } else if (this.form.date) {
         const date = normalizeDate(this.form.date);
@@ -242,21 +609,108 @@ export default {
           this.error = "Date must be YYYY-MM-DD";
           return null;
         }
-        items.push({ field: "taken", op: this.form.dateOp, value: date });
-      }
-      if (this.form.type) {
-        items.push({ field: "type", op: "is", value: this.form.type });
+        where.items = where.items.filter((item) => item.field !== "taken");
+        where.items.push({ field: "taken", op: this.form.dateOp, value: date });
       }
 
       return {
-        where: {
-          group: "ALL",
-          items: items.length ? items : [{ field: "type", op: "is", value: "image" }]
-        },
+        where,
         sort: { field: this.form.sortField, dir: this.form.sortDir },
-        limit: this.form.limit || 200,
-        offset: (this.page - 1) * (this.form.limit || 200)
+        limit: this.form.limit || 50,
+        offset: (this.page - 1) * (this.form.limit || 50)
       };
+    },
+    openSaveModal() {
+      if (!this.currentUser) {
+        this.showToast("Login required to save searches");
+        return;
+      }
+      const suggested = this.suggestedName();
+      this.saveName = suggested;
+      this.saveError = "";
+      this.replaceOpen = false;
+      this.saveOpen = true;
+    },
+    closeSaveModal() {
+      this.saveOpen = false;
+      this.saveError = "";
+    },
+    closeReplaceModal() {
+      this.replaceOpen = false;
+    },
+    suggestedName() {
+      const parts = [];
+      const includeTags = this.form.tags
+        .filter((t) => t.mode === "include")
+        .map((t) => t.value.trim())
+        .filter(Boolean);
+      const excludeTags = this.form.tags
+        .filter((t) => t.mode === "exclude")
+        .map((t) => t.value.trim())
+        .filter(Boolean);
+      includeTags.forEach((tag) => parts.push(tag));
+      excludeTags.forEach((tag) => parts.push(`NOT ${tag}`));
+
+      if (this.form.dateOp === "between" && this.form.start && this.form.end) {
+        parts.push(`from ${this.form.start} to ${this.form.end}`);
+      } else if (this.form.dateOp === "after" && this.form.date) {
+        parts.push(`after ${this.form.date}`);
+      } else if (this.form.dateOp === "before" && this.form.date) {
+        parts.push(`before ${this.form.date}`);
+      }
+      if (this.form.type) {
+        parts.push(`type ${this.form.type}`);
+      }
+      if (this.form.path) {
+        parts.push(`path ${this.form.path}`);
+      }
+      if (parts.length) {
+        return parts.join(" · ");
+      }
+      const now = new Date();
+      const stamp = now.toISOString().slice(0, 16).replace("T", " ");
+      return `Search ${stamp}`;
+    },
+    async submitSave(replace) {
+      const query = this.buildQuery();
+      if (!query) {
+        this.saveError = this.error || "Invalid query";
+        return;
+      }
+      const name = this.saveName.trim();
+      if (!name) {
+        this.saveError = "Name is required";
+        return;
+      }
+      this.loading = true;
+      this.saveError = "";
+      try {
+        const res = await fetch("/api/saved-searches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, query, replace })
+        });
+        if (this.handleAuthError(res)) {
+          return;
+        }
+        const data = await res.json();
+        if (res.status === 409 && data.error === "exists") {
+          this.saveOpen = false;
+          this.replaceOpen = true;
+          return;
+        }
+        if (!res.ok) {
+          this.saveError = data.message || data.error || "Failed to save search";
+          return;
+        }
+        this.saveOpen = false;
+        this.replaceOpen = false;
+        this.showToast("Saved");
+      } catch (err) {
+        this.saveError = "Failed to save search";
+      } finally {
+        this.loading = false;
+      }
     },
     addTagRow() {
       this.form.tags.push({ value: "", mode: "include" });
@@ -292,6 +746,9 @@ export default {
         qs.set("q", query);
         qs.set("limit", "12");
         const res = await fetch(`/api/tags?${qs.toString()}`);
+        if (this.handleAuthError(res)) {
+          return;
+        }
         const data = await res.json();
         if (!res.ok) {
           return;
@@ -325,21 +782,31 @@ export default {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(query)
         });
+        if (this.handleAuthError(res)) {
+          return;
+        }
         const data = await res.json();
         if (!res.ok) {
           this.error = data.error || "Search failed";
           this.results = [];
           return;
         }
-        if (Array.isArray(data.rows)) {
-          this.results = data.rows;
-          this.total = typeof data.total === "number" ? data.total : data.rows.length;
+        if (Array.isArray(data.items)) {
+          this.results = data.items;
+          this.total = typeof data.total === "number" ? data.total : data.items.length;
+          this.offset = typeof data.offset === "number" ? data.offset : 0;
+          this.limit = typeof data.limit === "number" ? data.limit : this.form.limit || 50;
           this.pageInput = this.page;
           this.debugInfo = data.debug ? JSON.stringify(data.debug, null, 2) : "";
         } else {
-          this.results = data;
-          this.total = Array.isArray(data) ? data.length : 0;
+          this.results = [];
+          this.total = 0;
           this.pageInput = this.page;
+        }
+        this.selectedIds = [];
+        this.viewerOpen = false;
+        if (!this.canFavorite) {
+          this.form.onlyFavorites = false;
         }
       } catch (err) {
         this.error = err.message || String(err);
@@ -375,6 +842,168 @@ export default {
       const d = new Date(ts * 1000);
       return d.toISOString().slice(0, 10);
     },
+    fileUrl(id) {
+      return `${window.location.origin}/api/file?id=${id}`;
+    },
+    thumbUrl(id) {
+      return `${window.location.origin}/api/thumb?id=${id}`;
+    },
+    fileName(path) {
+      if (!path) {
+        return "";
+      }
+      const parts = path.split("/");
+      return parts[parts.length - 1];
+    },
+    async copyLink(id) {
+      const text = this.fileUrl(id);
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const input = document.createElement("input");
+          input.value = text;
+          document.body.appendChild(input);
+          input.select();
+          document.execCommand("copy");
+          document.body.removeChild(input);
+        }
+        this.showToast("Copied!");
+      } catch (err) {
+        this.showToast("Copy failed");
+      }
+    },
+    async downloadSelected() {
+      if (this.selectedIds.length === 0) {
+        this.showToast("Please select images first (max 20)");
+        return;
+      }
+      if (this.selectedIds.length > 20) {
+        this.showToast("More than 20 images selected, please unselect some");
+        return;
+      }
+      try {
+        const res = await fetch("/api/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: this.selectedIds })
+        });
+        if (this.handleAuthError(res)) {
+          return;
+        }
+        if (!res.ok) {
+          const data = await res.json();
+          this.showToast(data.error || "Download failed");
+          return;
+        }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        const disposition = res.headers.get("Content-Disposition") || "";
+        const match = disposition.match(/filename=\"?([^\";]+)\"?/);
+        link.download = match ? match[1] : "webalbum-selected.zip";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      } catch (err) {
+        this.showToast("Download failed");
+      }
+    },
+    showToast(message) {
+      this.toast = message;
+      setTimeout(() => {
+        this.toast = "";
+      }, 1500);
+    },
+    handleAuthError(res) {
+      if (res.status === 401 || res.status === 403) {
+        window.dispatchEvent(new CustomEvent("wa-auth-changed", { detail: null }));
+        this.$router.push("/login");
+        return true;
+      }
+      return false;
+    },
+    async toggleFavorite(fileId) {
+      if (!this.canFavorite) {
+        this.showToast("Login required to use favorites");
+        return;
+      }
+      const row = this.results.find((r) => r.id === fileId);
+      if (!row) {
+        return;
+      }
+      const prev = row.is_favorite;
+      row.is_favorite = !prev;
+      try {
+        const res = await fetch("/api/favorites/toggle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file_id: fileId })
+        });
+        if (this.handleAuthError(res)) {
+          row.is_favorite = prev;
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          row.is_favorite = prev;
+          this.showToast(data.error || "Failed to toggle favorite");
+          return;
+        }
+        row.is_favorite = !!data.is_favorite;
+      } catch (err) {
+        row.is_favorite = prev;
+        this.showToast("Failed to toggle favorite");
+      }
+    },
+    clearSelection() {
+      this.selectedIds = [];
+    },
+    clearCriteria() {
+      const prefs = window.__wa_prefs || null;
+      const pageSize = prefs && prefs.page_size ? prefs.page_size : 50;
+      this.suspendAuto = true;
+      this.form = {
+        tags: [{ value: "", mode: "include" }],
+        tagMode: "ALL",
+        path: "",
+        dateOp: "after",
+        date: "",
+        start: "",
+        end: "",
+        type: "image",
+        onlyFavorites: false,
+        sortField: "path",
+        sortDir: "asc",
+        limit: pageSize
+      };
+      this.page = 1;
+      this.pageInput = 1;
+      this.activeTagIndex = null;
+      this.suggestions = [];
+      this.error = "";
+      this.savedBanner = "";
+      this.loadedSearchId = null;
+      this.loadedSearchName = "";
+      this.loadedQuery = null;
+      this.loadedSnapshot = "";
+      this.suspendAuto = false;
+      this.runSearch();
+    },
+    openViewer(id) {
+      const row = this.results.find((r) => r.id === id);
+      if (!row || row.type !== "image") {
+        this.showToast("Video preview not supported yet");
+        return;
+      }
+      this.viewerStartId = id;
+      this.viewerOpen = true;
+    },
+    closeViewer() {
+      this.viewerOpen = false;
+    },
     sortDirLabel(dir) {
       if (this.form.sortField === "taken") {
         return dir === "asc" ? "New-Old" : "Old-New";
@@ -383,26 +1012,62 @@ export default {
     }
   },
   watch: {
+    "form.dateOp"(next, prev) {
+      if (next === "between" && prev === "after") {
+        if (this.form.date && !this.form.start) {
+          this.form.start = this.form.date;
+        }
+      }
+    },
+    "$route.query.load"() {
+      this.applyLoadFromRoute();
+    },
     "form.sortField"() {
+      if (this.suspendAuto) {
+        return;
+      }
       this.page = 1;
       this.runSearch();
     },
     "form.sortDir"() {
+      if (this.suspendAuto) {
+        return;
+      }
       this.page = 1;
       this.runSearch();
     },
     "form.limit"() {
+      if (this.suspendAuto) {
+        return;
+      }
       this.page = 1;
       this.runSearch();
-    }
+    },
+    "form.onlyFavorites"() {
+      if (this.suspendAuto) {
+        return;
+      }
+      this.page = 1;
+      this.runSearch();
+    },
+    viewMode() {}
   },
   computed: {
     totalPages() {
       if (this.total === null || this.total === 0) {
         return 1;
       }
-      const perPage = this.form.limit || 200;
+      const perPage = this.form.limit || 50;
       return Math.max(1, Math.ceil(this.total / perPage));
+    },
+    canFavorite() {
+      return !!this.currentUser;
+    },
+    isModified() {
+      if (!this.loadedSnapshot) {
+        return false;
+      }
+      return this.snapshotFromBuilder() !== this.loadedSnapshot;
     }
   }
 };

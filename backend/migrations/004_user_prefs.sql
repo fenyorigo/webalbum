@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS wa_user_prefs (
+  user_id INT NOT NULL,
+  default_view VARCHAR(16) NOT NULL DEFAULT 'grid',
+  page_size INT NOT NULL DEFAULT 50,
+  thumb_size INT NOT NULL DEFAULT 180,
+  sort_mode VARCHAR(32) NOT NULL DEFAULT 'name_az',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id),
+  CONSTRAINT fk_user_prefs_user FOREIGN KEY (user_id) REFERENCES wa_users(id) ON DELETE CASCADE
+);

@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace WebAlbum\Http\Controllers;
 
 use WebAlbum\Db\SqliteIndex;
+use WebAlbum\Db\Maria;
 use WebAlbum\Query\Model;
 use WebAlbum\Query\Runner;
+use WebAlbum\UserContext;
 
 final class SearchController
 {
@@ -27,14 +29,72 @@ final class SearchController
 
             $config = require $this->configPath;
             $db = new SqliteIndex($config["sqlite"]["path"]);
+            $maria = null;
+            try {
+                $maria = new Maria(
+                    $config["mariadb"]["dsn"],
+                    $config["mariadb"]["user"],
+                    $config["mariadb"]["pass"]
+                );
+            } catch (\Throwable $e) {
+                $maria = null;
+            }
+            $user = UserContext::currentUser($maria);
+            if ($user === null) {
+                $this->json(["error" => "Not authenticated"], 401);
+                return;
+            }
+            $userId = $user["id"] ?? null;
 
             $runner = new Runner($db);
-            $result = $runner->run($query);
+            $restrictIds = null;
+            if (!empty($query["only_favorites"])) {
+                if ($userId === null || $maria === null) {
+                    $this->json([
+                        "items" => [],
+                        "total" => 0,
+                        "offset" => $query["offset"],
+                        "limit" => $query["limit"],
+                    ]);
+                    return;
+                }
+                $favRows = $maria->query(
+                    "SELECT file_id FROM wa_favorites WHERE user_id = ?",
+                    [$userId]
+                );
+                $restrictIds = array_map(fn (array $row): int => (int)$row["file_id"], $favRows);
+            }
+            $result = $runner->run($query, $restrictIds);
+
+            $items = $result["rows"];
+            if ($userId !== null && $maria !== null && $items !== []) {
+                $ids = array_map(fn (array $row): int => (int)$row["id"], $items);
+                $placeholders = implode(",", array_fill(0, count($ids), "?"));
+                $favRows = $maria->query(
+                    "SELECT file_id FROM wa_favorites WHERE user_id = ? AND file_id IN (" . $placeholders . ")",
+                    array_merge([$userId], $ids)
+                );
+                $favSet = [];
+                foreach ($favRows as $fav) {
+                    $favSet[(int)$fav["file_id"]] = true;
+                }
+                foreach ($items as &$row) {
+                    $row["is_favorite"] = isset($favSet[(int)$row["id"]]);
+                }
+                unset($row);
+            } else {
+                foreach ($items as &$row) {
+                    $row["is_favorite"] = false;
+                }
+                unset($row);
+            }
 
             if ($this->isDebug()) {
                 $this->json([
-                    "rows" => $result["rows"],
+                    "items" => $items,
                     "total" => $result["total"],
+                    "offset" => $query["offset"],
+                    "limit" => $query["limit"],
                     "debug" => [
                         "sql" => $result["sql"],
                         "params" => $result["params"],
@@ -44,8 +104,10 @@ final class SearchController
             }
 
             $this->json([
-                "rows" => $result["rows"],
+                "items" => $items,
                 "total" => $result["total"],
+                "offset" => $query["offset"],
+                "limit" => $query["limit"],
             ]);
         } catch (\JsonException $e) {
             $this->json(["error" => "Invalid JSON"], 400);

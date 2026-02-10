@@ -8,7 +8,7 @@ use WebAlbum\Db\SqliteIndex;
 
 final class HealthController
 {
-    private const VERSION = "webalbum 0.1.0";
+    private const VERSION = "webalbum 0.9.0";
 
     private string $configPath;
 

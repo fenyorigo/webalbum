@@ -6,6 +6,7 @@ namespace WebAlbum\Http\Controllers;
 
 use WebAlbum\Db\Maria;
 use WebAlbum\Db\SqliteIndex;
+use WebAlbum\UserContext;
 
 final class TagsController
 {
@@ -20,7 +21,17 @@ final class TagsController
     public function handleAutocomplete(): void
     {
         try {
-            [$sqlite, $maria] = $this->connections();
+            [$sqlite, $maria] = $this->connections(true);
+            if ($maria === null) {
+                $this->json(["error" => "MariaDB unavailable"], 500);
+                return;
+            }
+            $user = UserContext::currentUser($maria);
+            if ($user === null) {
+                $this->json(["error" => "Not authenticated"], 401);
+                return;
+            }
+            $userId = $user["id"];
 
             $q = $this->queryParam("q");
             $limit = $this->limitParam("limit", 50, 200);
@@ -29,27 +40,33 @@ final class TagsController
             $rows = $this->fetchSqliteTags($sqlite, $q, $fetchLimit);
             $tags = array_map(fn (array $row): string => $row["tag"], $rows);
 
-            if ($q !== null && $q !== "") {
-                $pinned = $this->fetchPinnedTags($maria);
+            if ($maria !== null && $q !== null && $q !== "") {
+                $pinned = $this->fetchPinnedTags($maria, $userId);
                 $missingPinned = array_values(array_diff($pinned, $tags));
                 if ($missingPinned !== []) {
                     $rows = array_merge($rows, $this->fetchSqliteTagsByList($sqlite, $missingPinned));
                 }
             }
 
-            $merged = $this->mergeWithPrefs($rows, $maria);
+            $merged = $maria !== null
+                ? $this->mergeWithPrefs($rows, $maria, $userId)
+                : $this->mergeWithoutPrefs($rows);
 
-            if ($q !== null && $q !== "") {
-                $merged = array_values(array_filter($merged, function (array $row) use ($q): bool {
-                    if ((int)$row["pinned"] === 1) {
-                        return true;
-                    }
-                    if ((int)$row["is_noise"] === 0) {
-                        return true;
-                    }
-                    return $this->startsWithCaseInsensitive($row["tag"], $q);
-                }));
-            }
+            $merged = array_values(array_filter($merged, function (array $row) use ($q): bool {
+                if ((int)($row["is_hidden"] ?? 0) === 1) {
+                    return false;
+                }
+                if ($q === null || $q === "") {
+                    return true;
+                }
+                if ((int)$row["pinned"] === 1) {
+                    return true;
+                }
+                if ((int)$row["is_noise"] === 0) {
+                    return true;
+                }
+                return $this->startsWithCaseInsensitive($row["tag"], $q);
+            }));
 
             $this->sortTags($merged);
             $merged = array_slice($merged, 0, $limit);
@@ -68,14 +85,24 @@ final class TagsController
     public function handleList(): void
     {
         try {
-            [$sqlite, $maria] = $this->connections();
+            [$sqlite, $maria] = $this->connections(true);
+            if ($maria === null) {
+                $this->json(["error" => "MariaDB unavailable"], 500);
+                return;
+            }
+            $user = UserContext::currentUser($maria);
+            if ($user === null) {
+                $this->json(["error" => "Not authenticated"], 401);
+                return;
+            }
+            $userId = $user["id"];
 
             $q = $this->queryParam("q");
             $limit = $this->limitParam("limit", 50, 200);
             $offset = $this->offsetParam("offset");
 
             [$rows, $total] = $this->fetchSqliteTagsPage($sqlite, $q, $limit, $offset);
-            $merged = $this->mergeWithPrefs($rows, $maria);
+            $merged = $this->mergeWithPrefs($rows, $maria, $userId);
 
             $this->json([
                 "rows" => $merged,
@@ -100,7 +127,16 @@ final class TagsController
             $isNoise = $this->boolInt($data["is_noise"] ?? null, "is_noise");
             $pinned = $this->boolInt($data["pinned"] ?? 0, "pinned");
 
-            [, $maria] = $this->connections();
+            [, $maria] = $this->connections(true);
+            if ($maria === null) {
+                $this->json(["error" => "MariaDB unavailable"], 500);
+                return;
+            }
+            $user = UserContext::currentUser($maria);
+            if ($user === null) {
+                $this->json(["error" => "Not authenticated"], 401);
+                return;
+            }
             $maria->exec(
                 "INSERT INTO wa_tag_prefs_global (tag, is_noise, pinned)\n" .
                 "VALUES (?, ?, ?)\n" .
@@ -121,15 +157,22 @@ final class TagsController
         }
     }
 
-    private function connections(): array
+    private function connections(bool $requireMaria = false): array
     {
         $config = require $this->configPath;
         $sqlite = new SqliteIndex($config["sqlite"]["path"]);
-        $maria = new Maria(
-            $config["mariadb"]["dsn"],
-            $config["mariadb"]["user"],
-            $config["mariadb"]["pass"]
-        );
+        $maria = null;
+        try {
+            $maria = new Maria(
+                $config["mariadb"]["dsn"],
+                $config["mariadb"]["user"],
+                $config["mariadb"]["pass"]
+            );
+        } catch (\Throwable $e) {
+            if ($requireMaria) {
+                $maria = null;
+            }
+        }
         return [$sqlite, $maria];
     }
 
@@ -197,29 +240,38 @@ final class TagsController
         }
         $placeholders = implode(",", array_fill(0, count($tags), "?"));
         return $db->query(
-            "SELECT t.tag, t.kind, COUNT(ft.file_id) AS cnt\n" .
+            "SELECT t.tag, COUNT(DISTINCT ft.file_id) AS cnt\n" .
             "FROM tags t\n" .
             "JOIN file_tags ft ON ft.tag_id = t.id\n" .
             "WHERE t.tag IN (" . $placeholders . ")\n" .
-            "GROUP BY t.id",
+            "GROUP BY t.tag",
             $tags
         );
     }
 
-    private function fetchPinnedTags(Maria $db): array
+    private function fetchPinnedTags(Maria $db, ?int $userId): array
     {
-        $rows = $db->query("SELECT tag FROM wa_tag_prefs_global WHERE pinned = 1");
+        if ($userId !== null) {
+            $rows = $db->query(
+                "SELECT tag FROM wa_tag_prefs_global WHERE pinned = 1\n" .
+                "UNION\n" .
+                "SELECT tag FROM wa_tag_prefs_user WHERE user_id = ? AND pinned = 1",
+                [$userId]
+            );
+        } else {
+            $rows = $db->query("SELECT tag FROM wa_tag_prefs_global WHERE pinned = 1");
+        }
         return array_map(fn (array $row): string => $row["tag"], $rows);
     }
 
-    private function mergeWithPrefs(array $rows, Maria $db): array
+    private function mergeWithPrefs(array $rows, Maria $db, ?int $userId): array
     {
         $tags = array_map(fn (array $row): string => $row["tag"], $rows);
-        $prefs = $this->prefsForTags($db, $tags);
+        $prefs = $this->prefsForTags($db, $tags, $userId);
         $merged = [];
         foreach ($rows as $row) {
             $tag = $row["tag"];
-            $pref = $prefs[$tag] ?? ["is_noise" => 0, "pinned" => 0];
+            $pref = $prefs[$tag] ?? ["is_noise" => 0, "pinned" => 0, "is_hidden" => 0];
             $mergedRow = $row;
             if (isset($mergedRow["cnt"])) {
                 $mergedRow["cnt"] = (int)$mergedRow["cnt"];
@@ -229,42 +281,87 @@ final class TagsController
             }
             $mergedRow["is_noise"] = (int)$pref["is_noise"];
             $mergedRow["pinned"] = (int)$pref["pinned"];
+            $mergedRow["is_hidden"] = (int)$pref["is_hidden"];
             $merged[] = $mergedRow;
         }
         return $merged;
     }
 
-    private function prefsForTags(Maria $db, array $tags): array
+    private function mergeWithoutPrefs(array $rows): array
+    {
+        $merged = [];
+        foreach ($rows as $row) {
+            $mergedRow = $row;
+            if (isset($mergedRow["cnt"])) {
+                $mergedRow["cnt"] = (int)$mergedRow["cnt"];
+            }
+            if (isset($mergedRow["variants"])) {
+                $mergedRow["variants"] = (int)$mergedRow["variants"];
+            }
+            $mergedRow["is_noise"] = 0;
+            $mergedRow["pinned"] = 0;
+            $mergedRow["is_hidden"] = 0;
+            $merged[] = $mergedRow;
+        }
+        return $merged;
+    }
+
+    private function prefsForTags(Maria $db, array $tags, ?int $userId): array
     {
         $tags = array_values(array_unique(array_filter($tags)));
         if ($tags === []) {
             return [];
         }
+        $cacheKey = $userId === null ? "global" : "user_" . $userId;
+        if (!isset($this->prefsCache[$cacheKey])) {
+            $this->prefsCache[$cacheKey] = [];
+        }
         $missing = [];
         foreach ($tags as $tag) {
-            if (!array_key_exists($tag, $this->prefsCache)) {
+            if (!array_key_exists($tag, $this->prefsCache[$cacheKey])) {
                 $missing[] = $tag;
             }
         }
         if ($missing !== []) {
             $placeholders = implode(",", array_fill(0, count($missing), "?"));
-            $rows = $db->query(
+            $globalRows = $db->query(
                 "SELECT tag, is_noise, pinned FROM wa_tag_prefs_global WHERE tag IN (" . $placeholders . ")",
                 $missing
             );
-            foreach ($rows as $row) {
-                $this->prefsCache[$row["tag"]] = [
+            $global = [];
+            foreach ($globalRows as $row) {
+                $global[$row["tag"]] = [
                     "is_noise" => (int)$row["is_noise"],
                     "pinned" => (int)$row["pinned"],
                 ];
             }
-            foreach ($missing as $tag) {
-                if (!array_key_exists($tag, $this->prefsCache)) {
-                    $this->prefsCache[$tag] = ["is_noise" => 0, "pinned" => 0];
+
+            $user = [];
+            if ($userId !== null) {
+                $userRows = $db->query(
+                    "SELECT tag, is_noise, pinned, is_hidden FROM wa_tag_prefs_user WHERE user_id = ? AND tag IN (" . $placeholders . ")",
+                    array_merge([$userId], $missing)
+                );
+                foreach ($userRows as $row) {
+                    $user[$row["tag"]] = [
+                        "is_noise" => $row["is_noise"] !== null ? (int)$row["is_noise"] : null,
+                        "pinned" => $row["pinned"] !== null ? (int)$row["pinned"] : null,
+                        "is_hidden" => (int)$row["is_hidden"],
+                    ];
                 }
             }
+
+            foreach ($missing as $tag) {
+                $g = $global[$tag] ?? ["is_noise" => 0, "pinned" => 0];
+                $u = $user[$tag] ?? ["is_noise" => null, "pinned" => null, "is_hidden" => 0];
+                $this->prefsCache[$cacheKey][$tag] = [
+                    "is_noise" => $u["is_noise"] !== null ? $u["is_noise"] : $g["is_noise"],
+                    "pinned" => $u["pinned"] !== null ? $u["pinned"] : $g["pinned"],
+                    "is_hidden" => $u["is_hidden"] ?? 0,
+                ];
+            }
         }
-        return $this->prefsCache;
+        return $this->prefsCache[$cacheKey];
     }
 
     private function sortTags(array &$rows): void

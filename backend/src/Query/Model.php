@@ -23,14 +23,26 @@ final class Model
             throw new \InvalidArgumentException("Missing where clause");
         }
 
-        $where = self::validateGroup($input["where"]);
+        $whereInput = $input["where"];
+        if (!is_array($whereInput)) {
+            throw new \InvalidArgumentException("where must be an object");
+        }
+        $onlyFavorites = false;
+        if (array_key_exists("only_favorites", $whereInput)) {
+            if (!is_bool($whereInput["only_favorites"])) {
+                throw new \InvalidArgumentException("where.only_favorites must be a boolean");
+            }
+            $onlyFavorites = $whereInput["only_favorites"];
+            unset($whereInput["only_favorites"]);
+        }
+        $where = self::validateGroup($whereInput);
 
         $sort = null;
         if (isset($input["sort"])) {
             $sort = self::validateSort($input["sort"]);
         }
 
-        $limit = 200;
+        $limit = 50;
         if (isset($input["limit"])) {
             if (!is_int($input["limit"]) || $input["limit"] < 1 || $input["limit"] > 1000) {
                 throw new \InvalidArgumentException("limit must be an integer between 1 and 1000");
@@ -51,6 +63,7 @@ final class Model
             "sort" => $sort,
             "limit" => $limit,
             "offset" => $offset,
+            "only_favorites" => $onlyFavorites,
         ];
     }
 

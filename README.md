@@ -64,8 +64,67 @@ npm run build
 
 ## Config
 
-Set `WEBALBUM_SQLITE_PATH` or edit `backend/config/config.php`.
+Set `WA_SQLITE_DB`, `WA_PHOTOS_ROOT`, `WA_THUMBS_ROOT`, `WA_THUMB_MAX`, `WA_THUMB_QUALITY` or edit `backend/config/config.php`.
+
+Example:
+
+```bash
+export WA_SQLITE_DB="/Users/bajanp/Projects/images-1.db"
+export WA_PHOTOS_ROOT="/Users/bajanp/Projects/indexer-test"
+export WA_THUMBS_ROOT="/Users/bajanp/Projects/indexer-test-thumbs"
+export WA_THUMB_MAX="256"
+export WA_THUMB_QUALITY="75"
+```
 
 ## MySQL Tag Prefs
 
 Run the migrations in `backend/sql/mysql/001_tag_prefs.sql` and `backend/sql/mysql/002_user_prefs.sql`.
+
+## Users MVP
+
+- Create users with `backend/migrations/001_users.sql` then apply `backend/sql/mysql/006_users_auth.sql` for auth fields.
+- For first-time setup, visit `/setup` and create the admin account (only available when `wa_users` is empty).
+- To add users, use the admin endpoints or insert manually into `wa_users`.
+- Seeded users in `backend/sql/mysql/003_seed_users.sql` use the password `changeme1234`.
+
+## Favorites
+
+- Create table via `backend/migrations/002_favorites.sql` or `backend/sql/mysql/004_favorites.sql`.
+- Favorites are per-user and require a logged-in user.
+
+## Auth & Setup
+
+- Login endpoints: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
+- Setup endpoints: `GET /api/setup/status`, `POST /api/setup` (one-time).
+- Setup creates `backend/var/setup.lock` to prevent re-running.
+- User prefs: apply `backend/sql/mysql/007_user_prefs.sql` and edit in “My Profile”.
+- Strong password rules: min 12 chars, upper/lower/number/special.
+- Admin-set passwords can be 8+ chars and force a change on first login.
+- Password changes require current password and clear the force-change flag.
+- Admin user management: open the “Admin ▾” menu and use “User management”.
+- Audit log: apply `backend/sql/mysql/008_audit_log.sql` and `backend/sql/mysql/009_audit_log_index.sql`.
+
+## Saved searches
+
+- Create table via `backend/sql/mysql/005_saved_searches.sql`.
+- Use the Search page “Save search” button to store the current query.
+- Manage saved searches from the “Saved searches” page (run, rename, delete).
+
+## Audit logs
+
+- Admins can open “Admin ▾” → “View logs”.
+- Example API call:
+
+```bash
+curl -b cookies.txt "http://localhost:8445/api/admin/audit-logs?page=1&page_size=50"
+```
+
+## Thumbnails On Demand
+
+Testing checklist:
+
+- Run a search returning images.
+- Confirm thumbs directory is created under `WA_THUMBS_ROOT` and mirrors `rel_path`.
+- Confirm first request generates thumbs, subsequent requests reuse them.
+- Confirm if an image is modified, thumb regenerates (mtime check).
+- Confirm it works on mac and Fedora where absolute paths differ (fallback to `WA_PHOTOS_ROOT + rel_path`).

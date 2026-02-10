@@ -21,10 +21,31 @@ if (is_file($autoload)) {
 use WebAlbum\Http\Controllers\HealthController;
 use WebAlbum\Http\Controllers\SearchController;
 use WebAlbum\Http\Controllers\TagsController;
+use WebAlbum\Http\Controllers\FileController;
+use WebAlbum\Http\Controllers\DownloadController;
+use WebAlbum\Http\Controllers\ThumbController;
+use WebAlbum\Http\Controllers\UsersController;
+use WebAlbum\Http\Controllers\FavoritesController;
+use WebAlbum\Http\Controllers\SavedSearchesController;
+use WebAlbum\Http\Controllers\AuthController;
+use WebAlbum\Http\Controllers\SetupController;
+use WebAlbum\Http\Controllers\PrefsController;
+use WebAlbum\Http\Controllers\AuditLogController;
 
 $method = $_SERVER["REQUEST_METHOD"] ?? "GET";
 $uri = $_SERVER["REQUEST_URI"] ?? "/";
 $path = parse_url($uri, PHP_URL_PATH) ?: "/";
+
+$isSecure = (!empty($_SERVER["HTTPS"]) && $_SERVER["HTTPS"] !== "off")
+    || (($_SERVER["HTTP_X_FORWARDED_PROTO"] ?? "") === "https");
+session_set_cookie_params([
+    "lifetime" => 0,
+    "path" => "/",
+    "httponly" => true,
+    "samesite" => "Lax",
+    "secure" => $isSecure,
+]);
+session_start();
 
 if ($method === "GET" && !str_starts_with($path, "/api")) {
     $index = __DIR__ . "/dist/index.html";
@@ -42,12 +63,122 @@ if ($method === "GET" && $path === "/api/tags") {
     (new TagsController($root . "/config/config.php"))->handleAutocomplete();
     exit;
 }
+if ($method === "GET" && $path === "/api/users") {
+    (new UsersController($root . "/config/config.php"))->handle();
+    exit;
+}
+if ($method === "POST" && $path === "/api/users") {
+    (new UsersController($root . "/config/config.php"))->create();
+    exit;
+}
+if ($method === "PUT" && preg_match("#^/api/users/(\\d+)$#", $path, $m)) {
+    (new UsersController($root . "/config/config.php"))->update((int)$m[1]);
+    exit;
+}
+if ($method === "POST" && preg_match("#^/api/users/(\\d+)/password$#", $path, $m)) {
+    (new UsersController($root . "/config/config.php"))->setPassword((int)$m[1]);
+    exit;
+}
+if ($method === "DELETE" && preg_match("#^/api/users/(\\d+)$#", $path, $m)) {
+    (new UsersController($root . "/config/config.php"))->delete((int)$m[1]);
+    exit;
+}
+if ($method === "POST" && $path === "/api/auth/login") {
+    (new AuthController($root . "/config/config.php"))->login();
+    exit;
+}
+if ($method === "POST" && $path === "/api/auth/logout") {
+    (new AuthController($root . "/config/config.php"))->logout();
+    exit;
+}
+if ($method === "GET" && $path === "/api/auth/me") {
+    (new AuthController($root . "/config/config.php"))->me();
+    exit;
+}
+if ($method === "POST" && $path === "/api/users/me/password") {
+    (new AuthController($root . "/config/config.php"))->changePassword();
+    exit;
+}
+if ($method === "GET" && ($path === "/api/admin/audit-logs" || $path === "/api/admin/logs")) {
+    (new AuditLogController($root . "/config/config.php"))->list();
+    exit;
+}
+if ($method === "GET" && $path === "/api/admin/audit-logs/meta") {
+    (new AuditLogController($root . "/config/config.php"))->meta();
+    exit;
+}
+if ($method === "GET" && $path === "/api/setup/status") {
+    (new SetupController($root . "/config/config.php"))->status();
+    exit;
+}
+if ($method === "POST" && $path === "/api/setup") {
+    (new SetupController($root . "/config/config.php"))->create();
+    exit;
+}
+if ($method === "GET" && $path === "/api/prefs") {
+    (new PrefsController($root . "/config/config.php"))->get();
+    exit;
+}
+if ($method === "POST" && $path === "/api/prefs") {
+    (new PrefsController($root . "/config/config.php"))->update();
+    exit;
+}
+if ($method === "POST" && $path === "/api/favorites/toggle") {
+    (new FavoritesController($root . "/config/config.php"))->toggle();
+    exit;
+}
+if ($method === "GET" && $path === "/api/favorites/list") {
+    (new FavoritesController($root . "/config/config.php"))->list();
+    exit;
+}
+if ($method === "GET" && $path === "/api/saved-searches") {
+    (new SavedSearchesController($root . "/config/config.php"))->list();
+    exit;
+}
+if ($method === "POST" && $path === "/api/saved-searches") {
+    (new SavedSearchesController($root . "/config/config.php"))->create();
+    exit;
+}
+if ($method === "GET" && preg_match("#^/api/saved-searches/(\\d+)$#", $path, $m)) {
+    (new SavedSearchesController($root . "/config/config.php"))->get((int)$m[1]);
+    exit;
+}
+if ($method === "PUT" && preg_match("#^/api/saved-searches/(\\d+)$#", $path, $m)) {
+    (new SavedSearchesController($root . "/config/config.php"))->update((int)$m[1]);
+    exit;
+}
+if ($method === "DELETE" && preg_match("#^/api/saved-searches/(\\d+)$#", $path, $m)) {
+    (new SavedSearchesController($root . "/config/config.php"))->delete((int)$m[1]);
+    exit;
+}
 if ($method === "GET" && $path === "/api/tags/list") {
     (new TagsController($root . "/config/config.php"))->handleList();
     exit;
 }
 if ($method === "POST" && $path === "/api/tags/prefs") {
     (new TagsController($root . "/config/config.php"))->handlePrefs();
+    exit;
+}
+if ($method === "GET" && $path === "/api/file") {
+    $id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+    (new FileController($root . "/config/config.php"))->handle($id);
+    exit;
+}
+if ($method === "GET" && preg_match("#^/api/file/(\\d+)$#", $path, $m)) {
+    (new FileController($root . "/config/config.php"))->handle((int)$m[1]);
+    exit;
+}
+if ($method === "GET" && $path === "/api/thumb") {
+    $id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+    (new ThumbController($root . "/config/config.php"))->handle($id);
+    exit;
+}
+if ($method === "GET" && preg_match("#^/api/thumb/(\\d+)$#", $path, $m)) {
+    (new ThumbController($root . "/config/config.php"))->handle((int)$m[1]);
+    exit;
+}
+if ($method === "POST" && $path === "/api/download") {
+    (new DownloadController($root . "/config/config.php"))->handle();
     exit;
 }
 if ($method === "POST" && $path === "/api/search") {

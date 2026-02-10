@@ -119,6 +119,9 @@ export default {
         qs.set("limit", String(this.limit));
         qs.set("offset", String(offset));
         const res = await fetch(`/api/tags/list?${qs.toString()}`);
+        if (this.handleAuthError(res)) {
+          return;
+        }
         const data = await res.json();
         if (!res.ok) {
           this.error = data.error || "Failed to load tags";
@@ -198,6 +201,9 @@ export default {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           }).then(async (res) => {
+            if (this.handleAuthError(res)) {
+              return;
+            }
             if (!res.ok) {
               const data = await res.json();
               throw new Error(data.error || "Failed to save tag prefs");
@@ -237,6 +243,14 @@ export default {
         this.page = clamped;
         this.fetchTags();
       }
+    },
+    handleAuthError(res) {
+      if (res.status === 401 || res.status === 403) {
+        window.dispatchEvent(new CustomEvent("wa-auth-changed", { detail: null }));
+        this.$router.push("/login");
+        return true;
+      }
+      return false;
     }
   },
   watch: {
