@@ -2,3 +2,6 @@ frontend/node_modules/
 frontend/dist/
 backend/public/dist/
 .DS_Store
+backend/config/config.php
+backend/var/setup.lock
+config.php
