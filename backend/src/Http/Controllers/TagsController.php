@@ -6,6 +6,7 @@ namespace WebAlbum\Http\Controllers;
 
 use WebAlbum\Db\Maria;
 use WebAlbum\Db\SqliteIndex;
+use WebAlbum\Tag\TagVisibility;
 use WebAlbum\UserContext;
 
 final class TagsController
@@ -178,13 +179,14 @@ final class TagsController
 
     private function fetchSqliteTags(SqliteIndex $db, ?string $q, int $limit): array
     {
+        $visible = TagVisibility::suppressPeopleVariantSql("t");
         if ($q !== null && $q !== "") {
             $like = self::escapeLike($q) . "%";
             return $db->query(
                 "SELECT t.tag, COUNT(DISTINCT ft.file_id) AS cnt\n" .
                 "FROM tags t\n" .
                 "JOIN file_tags ft ON ft.tag_id = t.id\n" .
-                "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE\n" .
+                "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible . "\n" .
                 "GROUP BY t.tag\n" .
                 "ORDER BY LOWER(t.tag) ASC\n" .
                 "LIMIT " . (int)$limit,
@@ -196,6 +198,7 @@ final class TagsController
             "SELECT t.tag, COUNT(DISTINCT ft.file_id) AS cnt\n" .
             "FROM tags t\n" .
             "JOIN file_tags ft ON ft.tag_id = t.id\n" .
+            "WHERE " . $visible . "\n" .
             "GROUP BY t.tag\n" .
             "ORDER BY cnt DESC, LOWER(t.tag) ASC\n" .
             "LIMIT " . (int)$limit
@@ -204,16 +207,18 @@ final class TagsController
 
     private function fetchSqliteTagsPage(SqliteIndex $db, ?string $q, int $limit, int $offset): array
     {
+        $visible = TagVisibility::suppressPeopleVariantSql("t");
         if ($q !== null && $q !== "") {
             $like = self::escapeLike($q) . "%";
             $total = $db->query(
-                "SELECT COUNT(DISTINCT t.tag) AS c FROM tags t WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE",
+                "SELECT COUNT(DISTINCT t.tag) AS c FROM tags t\n" .
+                "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible,
                 [$like]
             );
             $rows = $db->query(
                 "SELECT t.tag, COUNT(*) AS variants\n" .
                 "FROM tags t\n" .
-                "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE\n" .
+                "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible . "\n" .
                 "GROUP BY t.tag\n" .
                 "ORDER BY LOWER(t.tag) ASC\n" .
                 "LIMIT " . (int)$limit . " OFFSET " . (int)$offset,
@@ -222,10 +227,11 @@ final class TagsController
             return [$rows, (int)$total[0]["c"]];
         }
 
-        $total = $db->query("SELECT COUNT(DISTINCT tag) AS c FROM tags");
+        $total = $db->query("SELECT COUNT(DISTINCT t.tag) AS c FROM tags t WHERE " . $visible);
         $rows = $db->query(
             "SELECT t.tag, COUNT(*) AS variants\n" .
             "FROM tags t\n" .
+            "WHERE " . $visible . "\n" .
             "GROUP BY t.tag\n" .
             "ORDER BY LOWER(t.tag) ASC\n" .
             "LIMIT " . (int)$limit . " OFFSET " . (int)$offset
@@ -243,7 +249,7 @@ final class TagsController
             "SELECT t.tag, COUNT(DISTINCT ft.file_id) AS cnt\n" .
             "FROM tags t\n" .
             "JOIN file_tags ft ON ft.tag_id = t.id\n" .
-            "WHERE t.tag IN (" . $placeholders . ")\n" .
+            "WHERE t.tag IN (" . $placeholders . ") AND " . TagVisibility::suppressPeopleVariantSql("t") . "\n" .
             "GROUP BY t.tag",
             $tags
         );

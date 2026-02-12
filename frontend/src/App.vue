@@ -3,7 +3,7 @@
     <nav class="top">
       <div class="brand">
         Webalbum
-        <span class="version">v0.9.0</span>
+        <span class="version">v0.9.1</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>
@@ -930,9 +930,11 @@ body {
 }
 
 #app {
-  max-width: 1400px;
-  margin: 40px auto 80px;
-  padding: 0 20px;
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 16px 12px 24px;
+  box-sizing: border-box;
 }
 
 .top {
@@ -1018,7 +1020,8 @@ body {
 }
 
 .logs-modal {
-  max-width: 1100px;
+  width: 96vw;
+  max-width: 1800px;
   max-height: 85vh;
   overflow: auto;
 }
@@ -1157,6 +1160,11 @@ body {
   padding: 18px;
   width: min(520px, 92vw);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.modal.logs-modal {
+  width: 96vw;
+  max-width: 1800px;
 }
 
 .modal h3 {
@@ -1584,12 +1592,13 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   z-index: 1000;
 }
 
 .viewer-panel {
-  width: min(1200px, 92vw);
-  height: min(90vh, 900px);
+  width: min(1200px, 96vw);
+  height: min(96vh, 980px);
   background: #111;
   color: #fff;
   display: flex;
@@ -1630,23 +1639,30 @@ button:disabled {
 
 .viewer-body {
   flex: 1;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  min-height: 0;
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
   padding: 12px;
 }
 
 .viewer-media {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  overflow: hidden;
 }
 
 .viewer-img {
-  max-width: 100%;
-  max-height: 100%;
+  display: block;
+  max-width: 90vw;
+  max-height: calc(90vh - 72px);
+  width: auto;
+  height: auto;
   object-fit: contain;
 }
 

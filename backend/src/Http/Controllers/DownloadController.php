@@ -29,11 +29,11 @@ final class DownloadController
                 throw new \InvalidArgumentException("ids must be an array");
             }
             if (count($ids) === 0) {
-                $this->json(["error" => "Please select images first (max 20)"], 400);
+                $this->json(["error" => "Please select files first (max 20)"], 400);
                 return;
             }
             if (count($ids) > 20) {
-                $this->json(["error" => "More than 20 images selected, please unselect some"], 400);
+                $this->json(["error" => "More than 20 files selected, please unselect some"], 400);
                 return;
             }
 
@@ -71,8 +71,9 @@ final class DownloadController
 
             $files = [];
             foreach ($rows as $row) {
-                if (($row["type"] ?? "") !== "image") {
-                    $this->json(["error" => "Only images are supported"], 400);
+                $type = (string)($row["type"] ?? "");
+                if ($type !== "image" && $type !== "video") {
+                    $this->json(["error" => "Only image and video files are supported"], 400);
                     return;
                 }
                 $path = $row["path"] ?? "";
@@ -83,6 +84,7 @@ final class DownloadController
                 $files[] = [
                     "id" => (int)$row["id"],
                     "path" => $path,
+                    "type" => $type,
                 ];
             }
 

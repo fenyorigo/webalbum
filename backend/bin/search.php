@@ -29,29 +29,56 @@ if ($dbPath === "") {
     exit(1);
 }
 
-$sample = [
-    "where" => [
-        "group" => "ALL",
-        "items" => [
-            ["field" => "type", "op" => "is", "value" => "image"],
-            ["field" => "taken", "op" => "after", "value" => "2020-01-01"],
+$samples = [
+    "base" => [
+        "where" => [
+            "group" => "ALL",
+            "items" => [
+                ["field" => "type", "op" => "is", "value" => "image"],
+                ["field" => "taken", "op" => "after", "value" => "2020-01-01"],
+            ],
         ],
+        "sort" => ["field" => "taken", "dir" => "desc"],
+        "limit" => 20,
     ],
-    "sort" => ["field" => "taken", "dir" => "desc"],
-    "limit" => 20,
+    "regression_path_backslash" => [
+        "where" => [
+            "group" => "ALL",
+            "items" => [
+                ["field" => "path", "op" => "contains", "value" => "\\Gergely\\"],
+            ],
+        ],
+        "sort" => ["field" => "path", "dir" => "asc"],
+        "limit" => 20,
+    ],
+    "regression_path_accent" => [
+        "where" => [
+            "group" => "ALL",
+            "items" => [
+                ["field" => "path", "op" => "contains", "value" => "Zsófi"],
+            ],
+        ],
+        "sort" => ["field" => "path", "dir" => "asc"],
+        "limit" => 20,
+    ],
 ];
 
 try {
-    $query = Model::validateSearch($sample);
     $db = new SqliteIndex($dbPath);
     $runner = new Runner($db);
-    $result = $runner->run($query);
 
-    echo "SQL:\n" . $result["sql"] . "\n\n";
-    echo "Params:\n" . json_encode($result["params"], JSON_PRETTY_PRINT) . "\n\n";
-    echo "First 20 paths:\n";
-    foreach ($result["rows"] as $row) {
-        echo $row["path"] . "\n";
+    foreach ($samples as $name => $sample) {
+        $query = Model::validateSearch($sample);
+        $result = $runner->run($query);
+
+        echo "=== " . $name . " ===\n";
+        echo "SQL:\n" . $result["sql"] . "\n\n";
+        echo "Params:\n" . json_encode($result["params"], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n\n";
+        echo "First 20 paths:\n";
+        foreach ($result["rows"] as $row) {
+            echo $row["path"] . "\n";
+        }
+        echo "\n";
     }
 } catch (Throwable $e) {
     fwrite(STDERR, "Error: " . $e->getMessage() . "\n");

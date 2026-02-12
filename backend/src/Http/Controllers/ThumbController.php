@@ -47,7 +47,8 @@ final class ThumbController
             }
 
             $row = $rows[0];
-            if (($row["type"] ?? "") !== "image") {
+            $type = (string)($row["type"] ?? "");
+            if ($type !== "image" && $type !== "video") {
                 $this->json(["error" => "Not Found"], 404);
                 return;
             }
@@ -100,7 +101,7 @@ final class ThumbController
                 }
 
                 $tmp = $thumb . ".tmp";
-                $this->generateThumb($original, $tmp, $thumbMax, $quality);
+                $this->generateThumb($original, $tmp, $thumbMax, $quality, $type);
                 rename($tmp, $thumb);
                 $this->serveThumb($thumb);
             } finally {
@@ -193,8 +194,12 @@ final class ThumbController
         readfile($thumb);
     }
 
-    private function generateThumb(string $src, string $dest, int $max, int $quality): void
+    private function generateThumb(string $src, string $dest, int $max, int $quality, string $type): void
     {
+        if ($type === "video") {
+            $this->generateVideoThumb($src, $dest, $max, $quality);
+            return;
+        }
         if (class_exists(\Imagick::class)) {
             $this->generateThumbImagick($src, $dest, $max, $quality);
             return;
@@ -255,8 +260,124 @@ final class ThumbController
         imagefill($thumb, 0, 0, $white);
         imagecopyresampled($thumb, $image, 0, 0, 0, 0, $newW, $newH, $width, $height);
         imagejpeg($thumb, $dest, $quality);
-        imagedestroy($thumb);
-        imagedestroy($image);
+    }
+
+    private function generateVideoThumb(string $src, string $dest, int $max, int $quality): void
+    {
+        $jpegQ = $this->ffmpegJpegQ($quality);
+        $filter = "scale=w=" . $max . ":h=" . $max . ":force_original_aspect_ratio=decrease," .
+            "pad=" . $max . ":" . $max . ":(ow-iw)/2:(oh-ih)/2:color=white";
+
+        $ffmpeg = $this->resolveFfmpegBinary();
+        $ok = $this->runFfmpegFrame($ffmpeg, $src, $dest, 3, $filter, $jpegQ);
+        if (!$ok) {
+            $ok = $this->runFfmpegFrame($ffmpeg, $src, $dest, 1, $filter, $jpegQ);
+        }
+        if (!$ok || !is_file($dest) || filesize($dest) === 0) {
+            throw new \RuntimeException("Failed to generate video thumbnail (ffmpeg)");
+        }
+
+        // If drawing overlay fails, keep the plain video thumbnail.
+        $this->overlayPlayIcon($dest, $quality);
+    }
+
+    private function ffmpegJpegQ(int $quality): int
+    {
+        $quality = max(1, min(100, $quality));
+        return max(2, min(31, (int)round((100 - $quality) / 3)));
+    }
+
+    private function runFfmpegFrame(string $ffmpeg, string $src, string $dest, int $seekSec, string $filter, int $jpegQ): bool
+    {
+        $cmd = escapeshellarg($ffmpeg) . " -v error -y " .
+            "-ss " . (int)$seekSec . " " .
+            "-i " . escapeshellarg($src) . " " .
+            "-frames:v 1 " .
+            "-vf " . escapeshellarg($filter) . " " .
+            "-f image2 -vcodec mjpeg " .
+            "-q:v " . (int)$jpegQ . " " .
+            escapeshellarg($dest);
+
+        $descriptors = [
+            1 => ["pipe", "w"],
+            2 => ["pipe", "w"],
+        ];
+        $process = proc_open($cmd, $descriptors, $pipes);
+        if (!is_resource($process)) {
+            return false;
+        }
+        if (isset($pipes[1]) && is_resource($pipes[1])) {
+            stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+        }
+        if (isset($pipes[2]) && is_resource($pipes[2])) {
+            stream_get_contents($pipes[2]);
+            fclose($pipes[2]);
+        }
+        $exitCode = proc_close($process);
+        return $exitCode === 0;
+    }
+
+    private function resolveFfmpegBinary(): string
+    {
+        $fromEnv = getenv("WA_FFMPEG_BIN");
+        if (is_string($fromEnv) && $fromEnv !== "" && is_executable($fromEnv)) {
+            return $fromEnv;
+        }
+
+        $candidates = [
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg",
+            "ffmpeg",
+        ];
+        foreach ($candidates as $candidate) {
+            if ($candidate === "ffmpeg") {
+                return $candidate;
+            }
+            if (is_executable($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return "ffmpeg";
+    }
+
+    private function overlayPlayIcon(string $jpegPath, int $quality): void
+    {
+        if (!function_exists("imagecreatefromjpeg")) {
+            return;
+        }
+        $img = @imagecreatefromjpeg($jpegPath);
+        if ($img === false) {
+            return;
+        }
+
+        $w = imagesx($img);
+        $h = imagesy($img);
+        $short = min($w, $h);
+        $diameter = max(24, (int)round($short * 0.35));
+        $radius = $diameter / 2.0;
+        $cx = (int)round($w / 2);
+        $cy = (int)round($h / 2);
+
+        imagealphablending($img, true);
+        imagesavealpha($img, false);
+
+        $circle = imagecolorallocatealpha($img, 0, 0, 0, 63);
+        imagefilledellipse($img, $cx, $cy, $diameter, $diameter, $circle);
+
+        $triangleColor = imagecolorallocatealpha($img, 255, 255, 255, 0);
+        $triW = max(10, (int)round($diameter * 0.40));
+        $triH = max(12, (int)round($diameter * 0.46));
+        $xLeft = (int)round($cx - ($triW * 0.35));
+        $xRight = (int)round($cx + ($triW * 0.65));
+        $yTop = (int)round($cy - ($triH / 2));
+        $yBottom = (int)round($cy + ($triH / 2));
+
+        imagefilledpolygon($img, [$xLeft, $yTop, $xLeft, $yBottom, $xRight, $cy], $triangleColor);
+
+        imagejpeg($img, $jpegPath, max(1, min(100, $quality)));
     }
 
     private function json(array $payload, int $status = 200): void

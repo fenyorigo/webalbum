@@ -10,7 +10,7 @@
       <div class="grid-thumb">
         <button class="link" type="button" @click="$emit('open', row.id)">
           <img
-            v-if="row.type === 'image'"
+            v-if="row.type === 'image' || row.type === 'video'"
             :src="thumbUrl(row.id)"
             :alt="fileName(row.path)"
             loading="lazy"
