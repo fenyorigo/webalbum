@@ -46,6 +46,16 @@
         <span class="grid-date" v-if="row.taken_ts">{{ formatTs(row.taken_ts) }}</span>
       </div>
       <div class="grid-actions">
+        <button
+          v-if="canTrash"
+          class="trash"
+          type="button"
+          aria-label="Move to Trash"
+          @click.stop="$emit('request-trash', row)"
+        >
+          🗑
+        </button>
+        <span v-else></span>
         <button class="copy" type="button" @click="copyLink(row.id)">Copy</button>
       </div>
     </div>
@@ -60,6 +70,7 @@ export default {
     offset: { type: Number, required: true },
     selectedIds: { type: Array, required: true },
     canFavorite: { type: Boolean, default: true },
+    canTrash: { type: Boolean, default: false },
     fileUrl: { type: Function, required: true },
     thumbUrl: { type: Function, required: true },
     formatTs: { type: Function, required: true },
@@ -79,3 +90,18 @@ export default {
   }
 };
 </script>
+
+<style scoped>
+.grid-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.trash {
+  border: 1px solid #d6c9b5;
+  background: #fff;
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+</style>

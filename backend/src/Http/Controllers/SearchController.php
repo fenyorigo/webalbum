@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace WebAlbum\Http\Controllers;
 
-use WebAlbum\Db\SqliteIndex;
 use WebAlbum\Db\Maria;
+use WebAlbum\Db\SqliteIndex;
 use WebAlbum\Query\Model;
 use WebAlbum\Query\Runner;
 use WebAlbum\UserContext;
+use WebAlbum\Http\Controllers\AdminTrashController;
 
 final class SearchController
 {
@@ -44,12 +45,13 @@ final class SearchController
                 $this->json(["error" => "Not authenticated"], 401);
                 return;
             }
-            $userId = $user["id"] ?? null;
+            $userId = (int)($user["id"] ?? 0);
+            $isAdmin = (int)($user["is_admin"] ?? 0) === 1;
 
             $runner = new Runner($db);
             $restrictIds = null;
             if (!empty($query["only_favorites"])) {
-                if ($userId === null || $maria === null) {
+                if ($userId <= 0 || $maria === null) {
                     $this->json([
                         "items" => [],
                         "total" => 0,
@@ -64,10 +66,18 @@ final class SearchController
                 );
                 $restrictIds = array_map(fn (array $row): int => (int)$row["file_id"], $favRows);
             }
-            $result = $runner->run($query, $restrictIds);
+
+            $excludeTags = [];
+            $excludeRelPaths = [];
+            if ($maria !== null && $userId > 0) {
+                $excludeTags = $this->hiddenTagsForSearch($maria, $userId, $isAdmin);
+                $excludeRelPaths = AdminTrashController::activeTrashedRelPaths($maria);
+            }
+
+            $result = $runner->run($query, $restrictIds, $excludeTags, $excludeRelPaths);
 
             $items = $result["rows"];
-            if ($userId !== null && $maria !== null && $items !== []) {
+            if ($userId > 0 && $maria !== null && $items !== []) {
                 $ids = array_map(fn (array $row): int => (int)$row["id"], $items);
                 $placeholders = implode(",", array_fill(0, count($ids), "?"));
                 $favRows = $maria->query(
@@ -113,6 +123,55 @@ final class SearchController
             $this->json(["error" => "Invalid JSON"], 400);
         } catch (\Throwable $e) {
             $this->json(["error" => $e->getMessage()], 400);
+        }
+    }
+
+    private function hiddenTagsForSearch(Maria $maria, int $userId, bool $isAdmin): array
+    {
+        $tags = [];
+
+        if (!$isAdmin) {
+            $globalWhere = $this->hasGlobalHiddenColumn($maria) ? "is_hidden = 1" : "1 = 0";
+            if ($globalWhere !== "1 = 0") {
+                $globalRows = $maria->query(
+                    "SELECT tag FROM wa_tag_prefs_global WHERE " . $globalWhere
+                );
+                foreach ($globalRows as $row) {
+                    $tag = (string)($row["tag"] ?? "");
+                    if ($tag !== "") {
+                        $tags[$tag] = true;
+                    }
+                }
+            }
+        }
+
+        $userRows = $maria->query(
+            "SELECT tag FROM wa_tag_prefs_user WHERE user_id = ? AND is_hidden = 1",
+            [$userId]
+        );
+        foreach ($userRows as $row) {
+            $tag = (string)($row["tag"] ?? "");
+            if ($tag !== "") {
+                $tags[$tag] = true;
+            }
+        }
+
+        return array_keys($tags);
+    }
+
+    private function hasGlobalHiddenColumn(Maria $maria): bool
+    {
+        try {
+            $rows = $maria->query(
+                "SELECT COUNT(*) AS c\n" .
+                "FROM information_schema.columns\n" .
+                "WHERE table_schema = DATABASE()\n" .
+                "  AND table_name = 'wa_tag_prefs_global'\n" .
+                "  AND column_name = 'is_hidden'"
+            );
+            return ((int)($rows[0]["c"] ?? 0)) > 0;
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 

@@ -1,0 +1,2 @@
+ALTER TABLE wa_tag_prefs_global
+  ADD COLUMN IF NOT EXISTS is_hidden TINYINT(1) NOT NULL DEFAULT 0;

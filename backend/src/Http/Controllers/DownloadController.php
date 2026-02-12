@@ -61,12 +61,31 @@ final class DownloadController
 
             $placeholders = implode(",", array_fill(0, count($idList), "?"));
             $rows = $db->query(
-                "SELECT id, path, type FROM files WHERE id IN (" . $placeholders . ")",
+                "SELECT id, path, rel_path, type FROM files WHERE id IN (" . $placeholders . ")",
                 $idList
             );
             if (count($rows) !== count($idList)) {
                 $this->json(["error" => "Some files were not found"], 400);
                 return;
+            }
+
+            $relPaths = [];
+            foreach ($rows as $row) {
+                $rel = trim((string)($row["rel_path"] ?? ""));
+                if ($rel !== "") {
+                    $relPaths[$rel] = true;
+                }
+            }
+            if ($relPaths !== []) {
+                $trashRows = $maria->query(
+                    "SELECT rel_path FROM wa_media_trash WHERE status = 'trashed' AND rel_path IN (" .
+                    implode(",", array_fill(0, count($relPaths), "?")) . ")",
+                    array_keys($relPaths)
+                );
+                if ($trashRows !== []) {
+                    $this->json(["error" => "Trashed media cannot be downloaded"], 400);
+                    return;
+                }
             }
 
             $files = [];

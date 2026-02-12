@@ -22,6 +22,9 @@ use WebAlbum\Http\Controllers\HealthController;
 use WebAlbum\Http\Controllers\SearchController;
 use WebAlbum\Http\Controllers\TagsController;
 use WebAlbum\Http\Controllers\FileController;
+use WebAlbum\Http\Controllers\FileTagsController;
+use WebAlbum\Http\Controllers\MediaTagsController;
+use WebAlbum\Http\Controllers\VideoController;
 use WebAlbum\Http\Controllers\DownloadController;
 use WebAlbum\Http\Controllers\ThumbController;
 use WebAlbum\Http\Controllers\UsersController;
@@ -31,6 +34,8 @@ use WebAlbum\Http\Controllers\AuthController;
 use WebAlbum\Http\Controllers\SetupController;
 use WebAlbum\Http\Controllers\PrefsController;
 use WebAlbum\Http\Controllers\AuditLogController;
+use WebAlbum\Http\Controllers\AdminTrashController;
+use WebAlbum\Http\Controllers\MaintenanceController;
 
 $method = $_SERVER["REQUEST_METHOD"] ?? "GET";
 $uri = $_SERVER["REQUEST_URI"] ?? "/";
@@ -107,6 +112,47 @@ if ($method === "GET" && $path === "/api/admin/audit-logs/meta") {
     (new AuditLogController($root . "/config/config.php"))->meta();
     exit;
 }
+if ($method === "POST" && $path === "/api/admin/tags/reenable-all") {
+    (new TagsController($root . "/config/config.php"))->handleReenableAll();
+    exit;
+}
+if ($method === "GET" && $path === "/api/admin/trash") {
+    (new AdminTrashController($root . "/config/config.php"))->list();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/trash") {
+    (new AdminTrashController($root . "/config/config.php"))->move();
+    exit;
+}
+if ($method === "GET" && $path === "/api/admin/trash/thumb") {
+    $id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+    (new AdminTrashController($root . "/config/config.php"))->thumb($id);
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/trash/restore") {
+    (new AdminTrashController($root . "/config/config.php"))->restore();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/trash/restore-bulk") {
+    (new AdminTrashController($root . "/config/config.php"))->restoreBulk();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/trash/purge") {
+    (new AdminTrashController($root . "/config/config.php"))->purge();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/trash/purge-bulk") {
+    (new AdminTrashController($root . "/config/config.php"))->purgeBulk();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/trash/empty") {
+    (new AdminTrashController($root . "/config/config.php"))->empty();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/maintenance/clean-structure") {
+    (new MaintenanceController($root . "/config/config.php"))->cleanStructure();
+    exit;
+}
 if ($method === "GET" && $path === "/api/setup/status") {
     (new SetupController($root . "/config/config.php"))->status();
     exit;
@@ -164,8 +210,34 @@ if ($method === "GET" && $path === "/api/file") {
     (new FileController($root . "/config/config.php"))->handle($id);
     exit;
 }
+if ($method === "GET" && $path === "/api/file-tags") {
+    $id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+    (new FileTagsController($root . "/config/config.php"))->handle($id);
+    exit;
+}
+if ($method === "GET" && preg_match("#^/api/file-tags/(\\d+)$#", $path, $m)) {
+    (new FileTagsController($root . "/config/config.php"))->handle((int)$m[1]);
+    exit;
+}
+if ($method === "GET" && preg_match("#^/api/media/(\\d+)/tags$#", $path, $m)) {
+    (new MediaTagsController($root . "/config/config.php"))->get((int)$m[1]);
+    exit;
+}
+if ($method === "POST" && preg_match("#^/api/media/(\\d+)/tags$#", $path, $m)) {
+    (new MediaTagsController($root . "/config/config.php"))->save((int)$m[1]);
+    exit;
+}
 if ($method === "GET" && preg_match("#^/api/file/(\\d+)$#", $path, $m)) {
     (new FileController($root . "/config/config.php"))->handle((int)$m[1]);
+    exit;
+}
+if ($method === "GET" && $path === "/api/video") {
+    $id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+    (new VideoController($root . "/config/config.php"))->handle($id);
+    exit;
+}
+if ($method === "GET" && preg_match("#^/api/video/(\\d+)$#", $path, $m)) {
+    (new VideoController($root . "/config/config.php"))->handle((int)$m[1]);
     exit;
 }
 if ($method === "GET" && $path === "/api/thumb") {

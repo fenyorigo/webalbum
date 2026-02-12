@@ -205,6 +205,7 @@
         :offset="offset"
         :selected-ids="selectedIds"
         :can-favorite="canFavorite"
+        :can-trash="isAdmin"
         :file-url="fileUrl"
         :thumb-url="thumbUrl"
         :format-ts="formatTs"
@@ -213,6 +214,7 @@
         @open="openViewer"
         @toggle-favorite="toggleFavorite"
         @update:selected-ids="selectedIds = $event"
+        @request-trash="requestTrash"
       />
       <div
         class="pager"
@@ -262,8 +264,19 @@
       :results="results"
       :start-id="viewerStartId"
       :is-open="viewerOpen"
-      :file-url="fileUrl"
+       :file-url="fileUrl"
+      :current-user="currentUser"
       @close="closeViewer"
+      @trashed="onItemTrashed"
+    />
+    <video-viewer
+      :results="results.filter((r) => r.type === 'video')"
+      :start-id="videoViewerStartId"
+      :is-open="videoViewerOpen"
+       :video-url="videoUrl"
+      :current-user="currentUser"
+      @close="closeVideoViewer"
+      @trashed="onItemTrashed"
     />
     <div v-if="saveOpen" class="modal-backdrop" @click.self="closeSaveModal">
       <div class="modal">
@@ -297,10 +310,11 @@
 import ResultsGrid from "../components/ResultsGrid.vue";
 import ResultsList from "../components/ResultsList.vue";
 import ImageViewer from "../components/ImageViewer.vue";
+import VideoViewer from "../components/VideoViewer.vue";
 
 export default {
   name: "SearchPage",
-  components: { ResultsGrid, ResultsList, ImageViewer },
+  components: { ResultsGrid, ResultsList, ImageViewer, VideoViewer },
   data() {
     return {
       loading: false,
@@ -335,6 +349,8 @@ export default {
       viewMode: "list",
       viewerOpen: false,
       viewerStartId: 0,
+      videoViewerOpen: false,
+      videoViewerStartId: 0,
       currentUser: null,
       saveOpen: false,
       replaceOpen: false,
@@ -805,6 +821,7 @@ export default {
         }
         this.selectedIds = [];
         this.viewerOpen = false;
+        this.videoViewerOpen = false;
         if (!this.canFavorite) {
           this.form.onlyFavorites = false;
         }
@@ -844,6 +861,9 @@ export default {
     },
     fileUrl(id) {
       return `${window.location.origin}/api/file?id=${id}`;
+    },
+    videoUrl(id) {
+      return `${window.location.origin}/api/video?id=${id}`;
     },
     thumbUrl(id) {
       return `${window.location.origin}/api/thumb?id=${id}`;
@@ -909,6 +929,36 @@ export default {
         window.URL.revokeObjectURL(url);
       } catch (err) {
         this.showToast("Download failed");
+      }
+    },
+    async requestTrash(row) {
+      if (!this.isAdmin || !row || !row.id) {
+        return;
+      }
+      const ok = window.confirm(`Move to Trash?
+${row.path || row.rel_path || row.id}
+This is reversible from Admin -> Trash.`);
+      if (!ok) {
+        return;
+      }
+      try {
+        const res = await fetch("/api/admin/trash", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: row.id, type: row.type || "image" })
+        });
+        if (this.handleAuthError(res)) {
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          this.showToast(data.error || "Failed to move to trash");
+          return;
+        }
+        this.showToast("Moved to Trash");
+        await this.runSearch();
+      } catch (_e) {
+        this.showToast("Failed to move to trash");
       }
     },
     showToast(message) {
@@ -994,15 +1044,35 @@ export default {
     },
     openViewer(id) {
       const row = this.results.find((r) => r.id === id);
-      if (!row || row.type !== "image") {
-        this.showToast("Video preview not supported yet");
+      if (!row) {
         return;
       }
+      if (row.type === "video") {
+        this.viewerOpen = false;
+        this.videoViewerStartId = id;
+        this.videoViewerOpen = true;
+        return;
+      }
+      if (row.type !== "image") {
+        this.showToast("Preview not supported for this file type");
+        return;
+      }
+      this.videoViewerOpen = false;
       this.viewerStartId = id;
       this.viewerOpen = true;
     },
     closeViewer() {
       this.viewerOpen = false;
+    },
+    closeVideoViewer() {
+      this.videoViewerOpen = false;
+    },
+    async onItemTrashed() {
+      this.viewerOpen = false;
+      this.videoViewerOpen = false;
+      this.showToast("Moved to Trash");
+      this.selectedIds = [];
+      await this.runSearch();
     },
     sortDirLabel(dir) {
       if (this.form.sortField === "taken") {
@@ -1062,6 +1132,9 @@ export default {
     },
     canFavorite() {
       return !!this.currentUser;
+    },
+    isAdmin() {
+      return !!(this.currentUser && this.currentUser.is_admin);
     },
     isModified() {
       if (!this.loadedSnapshot) {

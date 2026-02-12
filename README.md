@@ -2,6 +2,11 @@
 
 Backend and frontend for browsing an indexer-produced SQLite database (read-only).
 
+## Release
+
+- Current version: `1.0.0`
+- See `CHANGELOG.md` for release notes.
+
 ## Backend
 
 - PHP 8.4, PDO, SQLite read-only
@@ -19,6 +24,10 @@ Backend and frontend for browsing an indexer-produced SQLite database (read-only
 `GET /api/tags/list` (admin list with `q`, `limit`, `offset`)
 
 `POST /api/tags/prefs` (body: `{"tag":"...", "is_noise":0|1, "pinned":0|1}`)
+
+`GET /api/media/{id}/tags`
+
+`POST /api/media/{id}/tags` (admin only, body: `{"tags":["András","Gergely"]}`)
 
 Request body:
 
@@ -64,7 +73,7 @@ npm run build
 
 ## Config
 
-Set `WA_SQLITE_DB`, `WA_PHOTOS_ROOT`, `WA_THUMBS_ROOT`, `WA_THUMB_MAX`, `WA_THUMB_QUALITY` or edit `backend/config/config.php`.
+Set `WA_SQLITE_DB`, `WA_PHOTOS_ROOT`, `WA_THUMBS_ROOT`, `WA_TRASH_ROOT`, `WA_TRASH_THUMBS_ROOT`, `WA_THUMB_MAX`, `WA_THUMB_QUALITY`, `WA_EXIFTOOL_PATH` or edit `backend/config/config.php`.
 
 Example:
 
@@ -72,8 +81,11 @@ Example:
 export WA_SQLITE_DB="/Users/bajanp/Projects/images-1.db"
 export WA_PHOTOS_ROOT="/Users/bajanp/Projects/indexer-test"
 export WA_THUMBS_ROOT="/Users/bajanp/Projects/indexer-test-thumbs"
+export WA_TRASH_ROOT="/Users/bajanp/Projects/indexer-test-trash"
+export WA_TRASH_THUMBS_ROOT="/Users/bajanp/Projects/indexer-test-thumbs-trash"
 export WA_THUMB_MAX="256"
 export WA_THUMB_QUALITY="75"
+export WA_EXIFTOOL_PATH="exiftool"
 ```
 
 ## MySQL Tag Prefs
@@ -110,6 +122,16 @@ Run the migrations in `backend/sql/mysql/001_tag_prefs.sql` and `backend/sql/mys
 - Use the Search page “Save search” button to store the current query.
 - Manage saved searches from the “Saved searches” page (run, rename, delete).
 
+## Trash
+
+- Apply migration `backend/sql/mysql/011_media_trash.sql`.
+- If upgrading an existing table, run `backend/sql/mysql/012_media_trash_hash.sql` (fallback: `backend/sql/mysql/012_media_trash_hash_fallback.sql`).
+- Admin endpoints: `POST /api/admin/trash`, `GET /api/admin/trash`, `POST /api/admin/trash/restore`, `POST /api/admin/trash/purge`, `POST /api/admin/trash/empty`, `GET /api/admin/trash/thumb?id=...`.
+- Bulk restore/purge accepts `{"trash_ids":[...]}` (single-item remains `{"trash_id":...}`).
+- Maintenance endpoint: `POST /api/admin/maintenance/clean-structure` (removes empty folders with trash blocker rules).
+- Admin UI: “Admin ▾” → “Trash”.
+- Trashed media is excluded from search and favorites until restored.
+
 ## Audit logs
 
 - Admins can open “Admin ▾” → “View logs”.
@@ -118,6 +140,16 @@ Run the migrations in `backend/sql/mysql/001_tag_prefs.sql` and `backend/sql/mys
 ```bash
 curl -b cookies.txt "http://localhost:8445/api/admin/audit-logs?page=1&page_size=50"
 ```
+
+## Media Tag Editing
+
+Testing checklist:
+
+- Admin can open viewer, click `Edit Tags`, add/remove tags, and save.
+- Non-admin users do not see `Edit Tags`.
+- Saving an empty list clears IPTC/XMP person tag fields.
+- After save, searching by a newly added tag returns that media (SQLite update applied).
+- Audit log contains `media_tags_update` with old/new tags.
 
 ## Thumbnails On Demand
 

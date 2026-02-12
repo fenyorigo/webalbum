@@ -13,8 +13,10 @@
           {{ fileName(current?.path || "") }}
         </div>
         <div class="viewer-count">{{ index + 1 }} / {{ results.length }}</div>
-        <button class="viewer-btn" @click="copyLink" aria-label="Copy link">Copy link</button>
-        <button class="viewer-btn" @click="downloadCurrent" aria-label="Download">Download</button>
+        <button class="viewer-btn" @click="togglePlay" aria-label="Play or pause">
+          {{ isPlaying ? "Pause" : "Play" }}
+        </button>
+        <button class="viewer-btn" @click="stopPlayback" aria-label="Stop">Stop</button>
         <button
           v-if="canEditTags"
           class="viewer-btn"
@@ -43,14 +45,19 @@
           ‹
         </button>
         <div class="viewer-media">
-          <img
-            v-if="current && current.type === 'image'"
-            :src="fileUrl(current.id)"
-            :alt="fileName(current.path)"
-            class="viewer-img"
+          <video
+            v-if="current"
+            ref="video"
+            class="viewer-video"
+            controls
+            preload="metadata"
+            :src="videoSrc"
+            @play="isPlaying = true"
+            @pause="isPlaying = false"
+            @ended="isPlaying = false"
             @error="onMediaError"
           />
-          <div v-else class="viewer-placeholder">Video preview not supported yet</div>
+          <div v-else class="viewer-placeholder">Video not available</div>
         </div>
         <button
           class="nav-btn"
@@ -111,18 +118,20 @@
 
 <script>
 export default {
-  name: "ImageViewer",
+  name: "VideoViewer",
   props: {
     results: { type: Array, required: true },
     startId: { type: Number, required: true },
     isOpen: { type: Boolean, required: true },
-    fileUrl: { type: Function, required: true },
+    videoUrl: { type: Function, required: true },
     currentUser: { type: Object, default: null }
   },
   emits: ["close", "trashed"],
   data() {
     return {
       index: 0,
+      videoSrc: "",
+      isPlaying: false,
       lastFocused: null,
       tagsById: {},
       editOpen: false,
@@ -162,12 +171,13 @@ export default {
         this.$nextTick(() => {
           this.mediaError = "";
           this.setIndexFromId();
-          this.preloadNeighbors();
+          this.loadCurrentVideo();
           this.fetchCurrentTags();
           this.focusFirst();
         });
         window.addEventListener("keydown", this.onKeydown);
       } else {
+        this.stopPlayback(true);
         this.tagsById = {};
         this.closeEditor();
         document.body.style.overflow = "";
@@ -181,7 +191,7 @@ export default {
       if (this.isOpen) {
         this.mediaError = "";
         this.setIndexFromId();
-        this.preloadNeighbors();
+        this.loadCurrentVideo();
         this.fetchCurrentTags();
       }
     },
@@ -189,17 +199,14 @@ export default {
       if (this.isOpen) {
         this.mediaError = "";
         this.setIndexFromId();
-        this.preloadNeighbors();
+        this.loadCurrentVideo();
         this.fetchCurrentTags();
       }
-    },
-    index() {
-      this.preloadNeighbors();
-      this.fetchCurrentTags();
     }
   },
   methods: {
     close() {
+      this.stopPlayback(true);
       this.$emit("close");
     },
     setIndexFromId() {
@@ -208,56 +215,76 @@ export default {
     },
     prev() {
       if (this.index > 0) {
+        this.stopPlayback(true);
         this.index -= 1;
+        this.loadCurrentVideo();
+        this.fetchCurrentTags();
       }
     },
     next() {
       if (this.index < this.results.length - 1) {
+        this.stopPlayback(true);
         this.index += 1;
+        this.loadCurrentVideo();
+        this.fetchCurrentTags();
       }
     },
     fileName(path) {
       const parts = path.split("/");
       return parts[parts.length - 1] || path;
     },
-    copyLink() {
-      if (!this.current) return;
-      const url = `${window.location.origin}/api/file?id=${this.current.id}`;
-      navigator.clipboard?.writeText(url).catch(() => {});
-    },
-    async downloadCurrent() {
-      if (!this.current) return;
-      const res = await fetch("/api/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: [this.current.id] })
-      });
-      if (!res.ok) {
-        return;
-      }
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      const disposition = res.headers.get("Content-Disposition") || "";
-      const match = disposition.match(/filename=\"?([^\";]+)\"?/);
-      link.download = match ? match[1] : "webalbum-selected.zip";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-    },
     onMediaError() {
       this.mediaError = "Trashed";
+    },
+    loadCurrentVideo() {
+      if (!this.current) {
+        this.videoSrc = "";
+        return;
+      }
+      this.videoSrc = this.videoUrl(this.current.id);
+      this.isPlaying = false;
+      this.$nextTick(() => {
+        const video = this.$refs.video;
+        if (video) {
+          video.pause();
+          video.currentTime = 0;
+        }
+      });
+    },
+    togglePlay() {
+      const video = this.$refs.video;
+      if (!video) {
+        return;
+      }
+      if (video.paused) {
+        video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+    },
+    stopPlayback(releaseSrc = false) {
+      const video = this.$refs.video;
+      if (video) {
+        video.pause();
+        try {
+          video.currentTime = 0;
+        } catch {}
+        if (releaseSrc) {
+          video.removeAttribute("src");
+          video.load();
+        }
+      }
+      if (releaseSrc) {
+        this.videoSrc = "";
+      }
+      this.isPlaying = false;
     },
     async moveToTrash() {
       if (!this.current || !this.canTrash) {
         return;
       }
       const relPath = this.current.path || this.fileName(this.current.path);
-      const ok = window.confirm(`Move to Trash?
-${relPath}
-This is reversible from Admin -> Trash.`);
+      const ok = window.confirm(`Move to Trash?\n${relPath}\nThis is reversible from Admin -> Trash.`);
       if (!ok) {
         return;
       }
@@ -265,7 +292,7 @@ This is reversible from Admin -> Trash.`);
         const res = await fetch("/api/admin/trash", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: this.current.id, type: this.current.type || "image" })
+          body: JSON.stringify({ id: this.current.id, type: this.current.type || "video" })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -277,15 +304,6 @@ This is reversible from Admin -> Trash.`);
       } catch (_e) {
         this.toast = "Failed to move to trash";
       }
-    },
-    preloadNeighbors() {
-      const ids = [];
-      if (this.results[this.index - 1]) ids.push(this.results[this.index - 1].id);
-      if (this.results[this.index + 1]) ids.push(this.results[this.index + 1].id);
-      ids.forEach((id) => {
-        const img = new Image();
-        img.src = this.fileUrl(id);
-      });
     },
     async fetchCurrentTags() {
       if (!this.current || this.tagsById[this.current.id]) {
@@ -453,6 +471,11 @@ This is reversible from Admin -> Trash.`);
       }
       if (event.key === "ArrowRight") {
         this.next();
+        return;
+      }
+      if (event.key === " " || event.code === "Space") {
+        event.preventDefault();
+        this.togglePlay();
         return;
       }
       if (event.key === "Tab") {

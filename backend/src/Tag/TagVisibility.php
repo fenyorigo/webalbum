@@ -13,4 +13,9 @@ final class TagVisibility
             "SELECT 1 FROM tags base_t WHERE base_t.tag = substr(" . $alias . ".tag, 8)" .
             "))";
     }
+
+    public static function excludePeopleForViewerSql(string $alias = "t"): string
+    {
+        return $alias . ".tag <> 'People' AND " . $alias . ".tag NOT LIKE 'People|%'";
+    }
 }

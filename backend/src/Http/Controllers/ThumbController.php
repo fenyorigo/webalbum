@@ -47,6 +47,11 @@ final class ThumbController
             }
 
             $row = $rows[0];
+            $relPath = trim((string)($row["rel_path"] ?? ""));
+            if ($relPath !== "" && $this->isRelPathTrashed($maria, $relPath)) {
+                $this->json(["error" => "Trashed"], 410);
+                return;
+            }
             $type = (string)($row["type"] ?? "");
             if ($type !== "image" && $type !== "video") {
                 $this->json(["error" => "Not Found"], 404);
@@ -378,6 +383,19 @@ final class ThumbController
         imagefilledpolygon($img, [$xLeft, $yTop, $xLeft, $yBottom, $xRight, $cy], $triangleColor);
 
         imagejpeg($img, $jpegPath, max(1, min(100, $quality)));
+    }
+
+    private function isRelPathTrashed(Maria $maria, string $relPath): bool
+    {
+        try {
+            $rows = $maria->query(
+                "SELECT id FROM wa_media_trash WHERE rel_path = ? AND status = 'trashed' LIMIT 1",
+                [$relPath]
+            );
+            return $rows !== [];
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     private function json(array $payload, int $status = 200): void

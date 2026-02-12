@@ -45,6 +45,24 @@ final class FavoritesController
                 return;
             }
 
+            $sqlite = new SqliteIndex($config["sqlite"]["path"]);
+            $rows = $sqlite->query("SELECT rel_path FROM files WHERE id = ?", [$fileId]);
+            if ($rows === []) {
+                $this->json(["error" => "Not Found"], 404);
+                return;
+            }
+            $relPath = trim((string)($rows[0]["rel_path"] ?? ""));
+            if ($relPath !== "") {
+                $trashed = $maria->query(
+                    "SELECT id FROM wa_media_trash WHERE rel_path = ? AND status = 'trashed' LIMIT 1",
+                    [$relPath]
+                );
+                if ($trashed !== []) {
+                    $this->json(["error" => "Cannot favorite trashed media"], 400);
+                    return;
+                }
+            }
+
             $exists = $maria->query(
                 "SELECT 1 FROM wa_favorites WHERE user_id = ? AND file_id = ?",
                 [$user["id"], $fileId]
@@ -88,33 +106,12 @@ final class FavoritesController
             $limit = $this->limitParam("limit", 50, 200);
             $offset = $this->offsetParam("offset");
             $sort = $_GET["sort"] ?? "date_new";
-            $order = match ($sort) {
-                "name_asc" => "files.path ASC",
-                "name_desc" => "files.path DESC",
-                "date_old" => "files.taken_ts ASC",
-                default => "files.taken_ts DESC",
-            };
-
-            $totalRows = $maria->query(
-                "SELECT COUNT(*) AS c FROM wa_favorites WHERE user_id = ?",
-                [$user["id"]]
-            );
-            $total = (int)$totalRows[0]["c"];
-            if ($total === 0) {
-                $this->json([
-                    "items" => [],
-                    "total" => 0,
-                    "offset" => $offset,
-                    "limit" => $limit,
-                ]);
-                return;
-            }
 
             $favRows = $maria->query(
                 "SELECT file_id FROM wa_favorites WHERE user_id = ?",
                 [$user["id"]]
             );
-            $ids = array_map(fn (array $row): int => (int)$row["file_id"], $favRows);
+            $ids = array_values(array_unique(array_map(fn (array $row): int => (int)$row["file_id"], $favRows)));
             if ($ids === []) {
                 $this->json([
                     "items" => [],
@@ -127,21 +124,69 @@ final class FavoritesController
 
             $sqlite = new SqliteIndex($config["sqlite"]["path"]);
             $placeholders = implode(",", array_fill(0, count($ids), "?"));
-            $items = $sqlite->query(
-                "SELECT id, path, taken_ts, type FROM files\n" .
-                "WHERE id IN (" . $placeholders . ")\n" .
-                "ORDER BY " . $order . "\n" .
-                "LIMIT " . (int)$limit . " OFFSET " . (int)$offset,
+            $rows = $sqlite->query(
+                "SELECT id, rel_path, path, taken_ts, type FROM files WHERE id IN (" . $placeholders . ")",
                 $ids
             );
-
-            foreach ($items as &$row) {
-                $row["is_favorite"] = true;
+            if ($rows === []) {
+                $this->json([
+                    "items" => [],
+                    "total" => 0,
+                    "offset" => $offset,
+                    "limit" => $limit,
+                ]);
+                return;
             }
-            unset($row);
+
+            $relPaths = [];
+            foreach ($rows as $row) {
+                $rel = trim((string)($row["rel_path"] ?? ""));
+                if ($rel !== "") {
+                    $relPaths[$rel] = true;
+                }
+            }
+
+            $trashed = [];
+            if ($relPaths !== []) {
+                $trashRows = $maria->query(
+                    "SELECT rel_path FROM wa_media_trash WHERE status = 'trashed' AND rel_path IN (" .
+                    implode(",", array_fill(0, count($relPaths), "?")) . ")",
+                    array_keys($relPaths)
+                );
+                foreach ($trashRows as $trashRow) {
+                    $rel = trim((string)($trashRow["rel_path"] ?? ""));
+                    if ($rel !== "") {
+                        $trashed[$rel] = true;
+                    }
+                }
+            }
+
+            $items = [];
+            foreach ($rows as $row) {
+                $rel = trim((string)($row["rel_path"] ?? ""));
+                if ($rel !== "" && isset($trashed[$rel])) {
+                    continue;
+                }
+                $row["is_favorite"] = true;
+                unset($row["rel_path"]);
+                $items[] = $row;
+            }
+
+            if ($sort === "name_asc") {
+                usort($items, fn (array $a, array $b): int => strcasecmp((string)($a["path"] ?? ""), (string)($b["path"] ?? "")));
+            } elseif ($sort === "name_desc") {
+                usort($items, fn (array $a, array $b): int => strcasecmp((string)($b["path"] ?? ""), (string)($a["path"] ?? "")));
+            } elseif ($sort === "date_old") {
+                usort($items, fn (array $a, array $b): int => ((int)($a["taken_ts"] ?? 0)) <=> ((int)($b["taken_ts"] ?? 0)));
+            } else {
+                usort($items, fn (array $a, array $b): int => ((int)($b["taken_ts"] ?? 0)) <=> ((int)($a["taken_ts"] ?? 0)));
+            }
+
+            $total = count($items);
+            $paged = array_slice($items, $offset, $limit);
 
             $this->json([
-                "items" => $items,
+                "items" => array_values($paged),
                 "total" => $total,
                 "offset" => $offset,
                 "limit" => $limit,

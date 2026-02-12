@@ -6,6 +6,7 @@ import SavedSearchesPage from "./pages/SavedSearchesPage.vue";
 import LoginPage from "./pages/LoginPage.vue";
 import SetupPage from "./pages/SetupPage.vue";
 import ProfilePage from "./pages/ProfilePage.vue";
+import TrashPage from "./pages/TrashPage.vue";
 
 const routes = [
   { path: "/login", component: LoginPage },
@@ -14,7 +15,8 @@ const routes = [
   { path: "/tags", component: TagsPage },
   { path: "/favorites", component: FavoritesPage },
   { path: "/saved-searches", component: SavedSearchesPage },
-  { path: "/profile", component: ProfilePage }
+  { path: "/profile", component: ProfilePage },
+  { path: "/trash", component: TrashPage }
 ];
 
 const router = createRouter({
@@ -65,6 +67,9 @@ router.beforeEach(async (to) => {
       return "/login";
     }
     return "/login";
+  }
+  if (to.path === "/trash" && !user.is_admin) {
+    return "/";
   }
   return true;
 });

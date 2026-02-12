@@ -1,6 +1,6 @@
 {
   "name": "webalbum-frontend",
-  "version": "0.9.1",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "vite",

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WebAlbum\Http\Controllers;
 
+use WebAlbum\AuditLogMetaCache;
 use WebAlbum\Db\Maria;
 use WebAlbum\Db\SqliteIndex;
 use WebAlbum\Tag\TagVisibility;
@@ -13,6 +14,7 @@ final class TagsController
 {
     private string $configPath;
     private array $prefsCache = [];
+    private ?bool $globalHiddenColumn = null;
 
     public function __construct(string $configPath)
     {
@@ -32,16 +34,18 @@ final class TagsController
                 $this->json(["error" => "Not authenticated"], 401);
                 return;
             }
-            $userId = $user["id"];
 
+            $userId = (int)$user["id"];
+            $isAdmin = (int)($user["is_admin"] ?? 0) === 1;
             $q = $this->queryParam("q");
             $limit = $this->limitParam("limit", 50, 200);
-            $fetchLimit = $limit * 3;
+            $fetchLimit = max($limit * 8, 200);
+            $revealHidden = $this->revealHiddenParam() && $isAdmin;
 
             $rows = $this->fetchSqliteTags($sqlite, $q, $fetchLimit);
             $tags = array_map(fn (array $row): string => $row["tag"], $rows);
 
-            if ($maria !== null && $q !== null && $q !== "") {
+            if ($q !== null && $q !== "") {
                 $pinned = $this->fetchPinnedTags($maria, $userId);
                 $missingPinned = array_values(array_diff($pinned, $tags));
                 if ($missingPinned !== []) {
@@ -49,12 +53,9 @@ final class TagsController
                 }
             }
 
-            $merged = $maria !== null
-                ? $this->mergeWithPrefs($rows, $maria, $userId)
-                : $this->mergeWithoutPrefs($rows);
-
-            $merged = array_values(array_filter($merged, function (array $row) use ($q): bool {
-                if ((int)($row["is_hidden"] ?? 0) === 1) {
+            $merged = $this->mergeWithPrefs($rows, $maria, $userId, $isAdmin);
+            $merged = array_values(array_filter($merged, function (array $row) use ($q, $revealHidden): bool {
+                if (!$revealHidden && (int)($row["is_hidden"] ?? 0) === 1) {
                     return false;
                 }
                 if ($q === null || $q === "") {
@@ -96,18 +97,28 @@ final class TagsController
                 $this->json(["error" => "Not authenticated"], 401);
                 return;
             }
-            $userId = $user["id"];
 
+            $userId = (int)$user["id"];
+            $isAdmin = (int)($user["is_admin"] ?? 0) === 1;
             $q = $this->queryParam("q");
             $limit = $this->limitParam("limit", 50, 200);
             $offset = $this->offsetParam("offset");
 
-            [$rows, $total] = $this->fetchSqliteTagsPage($sqlite, $q, $limit, $offset);
-            $merged = $this->mergeWithPrefs($rows, $maria, $userId);
+            if ($isAdmin) {
+                [$rows, $total] = $this->fetchSqliteTagsPage($sqlite, $q, $limit, $offset);
+                $merged = $this->mergeWithPrefs($rows, $maria, $userId, true);
+            } else {
+                $rows = $this->fetchSqliteTagsForListAll($sqlite, $q);
+                $mergedAll = $this->mergeWithPrefs($rows, $maria, $userId, false);
+                $visible = array_values(array_filter($mergedAll, fn (array $row): bool => (int)$row["enabled_global"] === 1));
+                $total = count($visible);
+                $merged = array_slice($visible, $offset, $limit);
+            }
 
             $this->json([
                 "rows" => $merged,
                 "total" => $total,
+                "is_admin" => $isAdmin ? 1 : 0,
             ]);
         } catch (\Throwable $e) {
             $this->json(["error" => $e->getMessage()], 400);
@@ -125,9 +136,6 @@ final class TagsController
                 throw new \InvalidArgumentException("tag is required");
             }
 
-            $isNoise = $this->boolInt($data["is_noise"] ?? null, "is_noise");
-            $pinned = $this->boolInt($data["pinned"] ?? 0, "pinned");
-
             [, $maria] = $this->connections(true);
             if ($maria === null) {
                 $this->json(["error" => "MariaDB unavailable"], 500);
@@ -138,6 +146,87 @@ final class TagsController
                 $this->json(["error" => "Not authenticated"], 401);
                 return;
             }
+            $userId = (int)$user["id"];
+            $isAdmin = (int)($user["is_admin"] ?? 0) === 1;
+
+            $enabledPresent = array_key_exists("enabled", $data) || array_key_exists("is_hidden", $data);
+            if ($enabledPresent) {
+                $scope = isset($data["scope"]) && is_string($data["scope"]) ? strtolower(trim($data["scope"])) : "personal";
+                if (!in_array($scope, ["global", "personal"], true)) {
+                    throw new \InvalidArgumentException("scope must be global or personal");
+                }
+
+                $isHidden = array_key_exists("is_hidden", $data)
+                    ? $this->boolInt($data["is_hidden"], "is_hidden")
+                    : ($this->boolInt($data["enabled"], "enabled") === 1 ? 0 : 1);
+                $enabled = $isHidden === 0;
+
+                if ($scope === "global") {
+                    if (!$isAdmin) {
+                        $this->json(["error" => "Forbidden"], 403);
+                        return;
+                    }
+                    if (!$this->hasGlobalHiddenColumn($maria)) {
+                        throw new \RuntimeException("Missing wa_tag_prefs_global.is_hidden. Run backend/sql/mysql/010_tag_global_enabled.sql");
+                    }
+                    $maria->exec(
+                        "INSERT INTO wa_tag_prefs_global (tag, is_noise, pinned, is_hidden)\n" .
+                        "VALUES (?, 0, 0, ?)\n" .
+                        "ON DUPLICATE KEY UPDATE is_hidden = VALUES(is_hidden)",
+                        [$tag, $isHidden]
+                    );
+                    $this->logAudit(
+                        $maria,
+                        $userId,
+                        null,
+                        ($enabled ? "tag_global_enable" : "tag_global_disable"),
+                        "web",
+                        [
+                            "tag" => $tag,
+                            "enabled" => $enabled,
+                            "scope" => "global",
+                        ]
+                    );
+                } else {
+                    $maria->exec(
+                        "INSERT INTO wa_tag_prefs_user (user_id, tag, is_noise, pinned, is_hidden)\n" .
+                        "VALUES (?, ?, NULL, NULL, ?)\n" .
+                        "ON DUPLICATE KEY UPDATE is_hidden = VALUES(is_hidden)",
+                        [$userId, $tag, $isHidden]
+                    );
+                    $this->logAudit(
+                        $maria,
+                        $userId,
+                        $userId,
+                        ($enabled ? "tag_user_enable" : "tag_user_disable"),
+                        "web",
+                        [
+                            "tag" => $tag,
+                            "enabled" => $enabled,
+                            "scope" => "personal",
+                            "affected_user_id" => $userId,
+                        ]
+                    );
+                }
+
+                $this->json([
+                    "ok" => true,
+                    "tag" => $tag,
+                    "scope" => $scope,
+                    "enabled" => $enabled,
+                    "is_hidden" => $isHidden,
+                ]);
+                return;
+            }
+
+            $isNoise = $this->boolInt($data["is_noise"] ?? null, "is_noise");
+            $pinned = $this->boolInt($data["pinned"] ?? 0, "pinned");
+
+            if (!$isAdmin) {
+                $this->json(["error" => "Forbidden"], 403);
+                return;
+            }
+
             $maria->exec(
                 "INSERT INTO wa_tag_prefs_global (tag, is_noise, pinned)\n" .
                 "VALUES (?, ?, ?)\n" .
@@ -153,6 +242,46 @@ final class TagsController
             ]);
         } catch (\JsonException $e) {
             $this->json(["error" => "Invalid JSON"], 400);
+        } catch (\Throwable $e) {
+            $this->json(["error" => $e->getMessage()], 400);
+        }
+    }
+
+    public function handleReenableAll(): void
+    {
+        try {
+            [, $maria] = $this->connections(true);
+            if ($maria === null) {
+                $this->json(["error" => "MariaDB unavailable"], 500);
+                return;
+            }
+            $user = UserContext::currentUser($maria);
+            if ($user === null) {
+                $this->json(["error" => "Not authenticated"], 401);
+                return;
+            }
+            $userId = (int)$user["id"];
+            $isAdmin = (int)($user["is_admin"] ?? 0) === 1;
+            if (!$isAdmin) {
+                $this->json(["error" => "Forbidden"], 403);
+                return;
+            }
+
+            if ($this->hasGlobalHiddenColumn($maria)) {
+                $maria->exec("UPDATE wa_tag_prefs_global SET is_hidden = 0");
+            }
+            $maria->exec("UPDATE wa_tag_prefs_user SET is_hidden = 0");
+
+            $this->logAudit(
+                $maria,
+                $userId,
+                null,
+                "tag_reenable_all",
+                "web",
+                ["scope" => "global+personal", "enabled" => true]
+            );
+
+            $this->json(["ok" => true]);
         } catch (\Throwable $e) {
             $this->json(["error" => $e->getMessage()], 400);
         }
@@ -202,6 +331,30 @@ final class TagsController
             "GROUP BY t.tag\n" .
             "ORDER BY cnt DESC, LOWER(t.tag) ASC\n" .
             "LIMIT " . (int)$limit
+        );
+    }
+
+    private function fetchSqliteTagsForListAll(SqliteIndex $db, ?string $q): array
+    {
+        $visible = TagVisibility::suppressPeopleVariantSql("t");
+        if ($q !== null && $q !== "") {
+            $like = self::escapeLike($q) . "%";
+            return $db->query(
+                "SELECT t.tag, COUNT(*) AS variants\n" .
+                "FROM tags t\n" .
+                "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible . "\n" .
+                "GROUP BY t.tag\n" .
+                "ORDER BY LOWER(t.tag) ASC",
+                [$like]
+            );
+        }
+
+        return $db->query(
+            "SELECT t.tag, COUNT(*) AS variants\n" .
+            "FROM tags t\n" .
+            "WHERE " . $visible . "\n" .
+            "GROUP BY t.tag\n" .
+            "ORDER BY LOWER(t.tag) ASC"
         );
     }
 
@@ -255,29 +408,31 @@ final class TagsController
         );
     }
 
-    private function fetchPinnedTags(Maria $db, ?int $userId): array
+    private function fetchPinnedTags(Maria $db, int $userId): array
     {
-        if ($userId !== null) {
-            $rows = $db->query(
-                "SELECT tag FROM wa_tag_prefs_global WHERE pinned = 1\n" .
-                "UNION\n" .
-                "SELECT tag FROM wa_tag_prefs_user WHERE user_id = ? AND pinned = 1",
-                [$userId]
-            );
-        } else {
-            $rows = $db->query("SELECT tag FROM wa_tag_prefs_global WHERE pinned = 1");
-        }
+        $rows = $db->query(
+            "SELECT tag FROM wa_tag_prefs_global WHERE pinned = 1\n" .
+            "UNION\n" .
+            "SELECT tag FROM wa_tag_prefs_user WHERE user_id = ? AND pinned = 1",
+            [$userId]
+        );
         return array_map(fn (array $row): string => $row["tag"], $rows);
     }
 
-    private function mergeWithPrefs(array $rows, Maria $db, ?int $userId): array
+    private function mergeWithPrefs(array $rows, Maria $db, int $userId, bool $isAdmin): array
     {
         $tags = array_map(fn (array $row): string => $row["tag"], $rows);
-        $prefs = $this->prefsForTags($db, $tags, $userId);
+        $prefs = $this->prefsForTags($db, $tags, $userId, $isAdmin);
         $merged = [];
         foreach ($rows as $row) {
             $tag = $row["tag"];
-            $pref = $prefs[$tag] ?? ["is_noise" => 0, "pinned" => 0, "is_hidden" => 0];
+            $pref = $prefs[$tag] ?? [
+                "is_noise" => 0,
+                "pinned" => 0,
+                "is_hidden" => 0,
+                "enabled_global" => 1,
+                "enabled_personal" => 1,
+            ];
             $mergedRow = $row;
             if (isset($mergedRow["cnt"])) {
                 $mergedRow["cnt"] = (int)$mergedRow["cnt"];
@@ -288,37 +443,20 @@ final class TagsController
             $mergedRow["is_noise"] = (int)$pref["is_noise"];
             $mergedRow["pinned"] = (int)$pref["pinned"];
             $mergedRow["is_hidden"] = (int)$pref["is_hidden"];
+            $mergedRow["enabled_global"] = (int)$pref["enabled_global"];
+            $mergedRow["enabled_personal"] = (int)$pref["enabled_personal"];
             $merged[] = $mergedRow;
         }
         return $merged;
     }
 
-    private function mergeWithoutPrefs(array $rows): array
-    {
-        $merged = [];
-        foreach ($rows as $row) {
-            $mergedRow = $row;
-            if (isset($mergedRow["cnt"])) {
-                $mergedRow["cnt"] = (int)$mergedRow["cnt"];
-            }
-            if (isset($mergedRow["variants"])) {
-                $mergedRow["variants"] = (int)$mergedRow["variants"];
-            }
-            $mergedRow["is_noise"] = 0;
-            $mergedRow["pinned"] = 0;
-            $mergedRow["is_hidden"] = 0;
-            $merged[] = $mergedRow;
-        }
-        return $merged;
-    }
-
-    private function prefsForTags(Maria $db, array $tags, ?int $userId): array
+    private function prefsForTags(Maria $db, array $tags, int $userId, bool $isAdmin): array
     {
         $tags = array_values(array_unique(array_filter($tags)));
         if ($tags === []) {
             return [];
         }
-        $cacheKey = $userId === null ? "global" : "user_" . $userId;
+        $cacheKey = ($isAdmin ? "admin_" : "user_") . $userId;
         if (!isset($this->prefsCache[$cacheKey])) {
             $this->prefsCache[$cacheKey] = [];
         }
@@ -330,8 +468,9 @@ final class TagsController
         }
         if ($missing !== []) {
             $placeholders = implode(",", array_fill(0, count($missing), "?"));
+            $globalHiddenExpr = $this->hasGlobalHiddenColumn($db) ? "is_hidden" : "0 AS is_hidden";
             $globalRows = $db->query(
-                "SELECT tag, is_noise, pinned FROM wa_tag_prefs_global WHERE tag IN (" . $placeholders . ")",
+                "SELECT tag, is_noise, pinned, " . $globalHiddenExpr . " FROM wa_tag_prefs_global WHERE tag IN (" . $placeholders . ")",
                 $missing
             );
             $global = [];
@@ -339,35 +478,68 @@ final class TagsController
                 $global[$row["tag"]] = [
                     "is_noise" => (int)$row["is_noise"],
                     "pinned" => (int)$row["pinned"],
+                    "is_hidden" => (int)($row["is_hidden"] ?? 0),
                 ];
             }
 
+            $userRows = $db->query(
+                "SELECT tag, is_noise, pinned, is_hidden FROM wa_tag_prefs_user WHERE user_id = ? AND tag IN (" . $placeholders . ")",
+                array_merge([$userId], $missing)
+            );
             $user = [];
-            if ($userId !== null) {
-                $userRows = $db->query(
-                    "SELECT tag, is_noise, pinned, is_hidden FROM wa_tag_prefs_user WHERE user_id = ? AND tag IN (" . $placeholders . ")",
-                    array_merge([$userId], $missing)
-                );
-                foreach ($userRows as $row) {
-                    $user[$row["tag"]] = [
-                        "is_noise" => $row["is_noise"] !== null ? (int)$row["is_noise"] : null,
-                        "pinned" => $row["pinned"] !== null ? (int)$row["pinned"] : null,
-                        "is_hidden" => (int)$row["is_hidden"],
-                    ];
-                }
+            foreach ($userRows as $row) {
+                $user[$row["tag"]] = [
+                    "is_noise" => $row["is_noise"] !== null ? (int)$row["is_noise"] : null,
+                    "pinned" => $row["pinned"] !== null ? (int)$row["pinned"] : null,
+                    "is_hidden" => (int)$row["is_hidden"],
+                ];
             }
 
             foreach ($missing as $tag) {
-                $g = $global[$tag] ?? ["is_noise" => 0, "pinned" => 0];
-                $u = $user[$tag] ?? ["is_noise" => null, "pinned" => null, "is_hidden" => 0];
+                $g = $global[$tag] ?? ["is_noise" => 0, "pinned" => 0, "is_hidden" => 0];
+                $u = $user[$tag] ?? ["is_noise" => null, "pinned" => null, "is_hidden" => null];
+
+                $globalHidden = (int)$g["is_hidden"];
+                $personalHidden = $u["is_hidden"];
+
+                $effectiveHidden = $isAdmin
+                    ? (($personalHidden ?? 0) === 1 ? 1 : 0)
+                    : (($globalHidden === 1 || ($personalHidden ?? 0) === 1) ? 1 : 0);
+
+                $enabledPersonal = $personalHidden === null
+                    ? ($globalHidden === 1 ? 0 : 1)
+                    : ($personalHidden === 1 ? 0 : 1);
+
                 $this->prefsCache[$cacheKey][$tag] = [
                     "is_noise" => $u["is_noise"] !== null ? $u["is_noise"] : $g["is_noise"],
                     "pinned" => $u["pinned"] !== null ? $u["pinned"] : $g["pinned"],
-                    "is_hidden" => $u["is_hidden"] ?? 0,
+                    "is_hidden" => $effectiveHidden,
+                    "enabled_global" => $globalHidden === 1 ? 0 : 1,
+                    "enabled_personal" => $enabledPersonal,
                 ];
             }
         }
         return $this->prefsCache[$cacheKey];
+    }
+
+    private function hasGlobalHiddenColumn(Maria $db): bool
+    {
+        if ($this->globalHiddenColumn !== null) {
+            return $this->globalHiddenColumn;
+        }
+        try {
+            $rows = $db->query(
+                "SELECT COUNT(*) AS c\n" .
+                "FROM information_schema.columns\n" .
+                "WHERE table_schema = DATABASE()\n" .
+                "  AND table_name = 'wa_tag_prefs_global'\n" .
+                "  AND column_name = 'is_hidden'"
+            );
+            $this->globalHiddenColumn = ((int)($rows[0]["c"] ?? 0)) > 0;
+        } catch (\Throwable $e) {
+            $this->globalHiddenColumn = false;
+        }
+        return $this->globalHiddenColumn;
     }
 
     private function sortTags(array &$rows): void
@@ -384,8 +556,8 @@ final class TagsController
             if ($aSpecial !== $bSpecial) {
                 return $aSpecial <=> $bSpecial;
             }
-            if ($a["cnt"] !== $b["cnt"]) {
-                return $b["cnt"] <=> $a["cnt"];
+            if (($a["cnt"] ?? 0) !== ($b["cnt"] ?? 0)) {
+                return ($b["cnt"] ?? 0) <=> ($a["cnt"] ?? 0);
             }
             return strcmp($a["tag"], $b["tag"]);
         });
@@ -398,6 +570,9 @@ final class TagsController
         }
         if ($value === "0" || $value === "1") {
             return (int)$value;
+        }
+        if ($value === true || $value === false) {
+            return $value ? 1 : 0;
         }
         throw new \InvalidArgumentException($key . " must be 0 or 1");
     }
@@ -452,9 +627,45 @@ final class TagsController
         return max(0, $value);
     }
 
+    private function revealHiddenParam(): bool
+    {
+        $value = $_GET["reveal_hidden"] ?? null;
+        return $value === "1" || $value === 1 || $value === true;
+    }
+
     private static function escapeLike(string $value): string
     {
         return str_replace(["\\", "%", "_"], ["\\\\", "\\%", "\\_"], $value);
+    }
+
+    private function logAudit(
+        Maria $db,
+        ?int $actorId,
+        ?int $targetId,
+        string $action,
+        string $source,
+        ?array $details = null
+    ): void {
+        try {
+            $ip = $_SERVER["REMOTE_ADDR"] ?? null;
+            $agent = $_SERVER["HTTP_USER_AGENT"] ?? null;
+            $db->exec(
+                "INSERT INTO wa_audit_log (actor_user_id, target_user_id, action, source, ip_address, user_agent, details)\n" .
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    $actorId,
+                    $targetId,
+                    $action,
+                    $source,
+                    $ip,
+                    $agent,
+                    $details ? json_encode($details, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
+                ]
+            );
+            AuditLogMetaCache::invalidateIfMissing($action, $source);
+        } catch (\Throwable $e) {
+            // audit logging must not block tag updates
+        }
     }
 
     private function json(array $payload, int $status = 200): void

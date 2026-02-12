@@ -88,7 +88,7 @@ final class UsersController
             );
             $idRow = $db->query("SELECT LAST_INSERT_ID() AS id");
             $newId = (int)($idRow[0]["id"] ?? 0);
-            $this->logAudit($db, (int)$user["id"], $newId, "password_set", "admin");
+            $this->logAudit($db, (int)$user["id"], $newId, "admin_user_create", "web", ["username" => $username, "display_name" => $displayName, "is_active" => $isActive === 1, "is_admin" => $isAdmin === 1]);
             $this->json([
                 "id" => (int)$idRow[0]["id"],
                 "username" => $username,
@@ -116,6 +116,12 @@ final class UsersController
             }
             $body = file_get_contents("php://input");
             $data = json_decode($body ?: "", true, 512, JSON_THROW_ON_ERROR);
+            $existingRows = $db->query("SELECT id, username, display_name, is_active, is_admin FROM wa_users WHERE id = ?", [$id]);
+            if ($existingRows === []) {
+                $this->json(["error" => "Not Found"], 404);
+                return;
+            }
+            $existing = $existingRows[0];
             $fields = [];
             $params = [];
             if (isset($data["username"])) {
@@ -161,7 +167,7 @@ final class UsersController
                 $fields[] = "password_hash = ?";
                 $params[] = password_hash($password, PASSWORD_DEFAULT);
                 $fields[] = "force_password_change = 1";
-                $this->logAudit($db, (int)$user["id"], $id, "password_reset", "admin");
+                $this->logAudit($db, (int)$user["id"], $id, "admin_user_reset_password", "web");
             }
             if ($fields === []) {
                 $this->json(["error" => "No updates"], 400);
@@ -172,6 +178,23 @@ final class UsersController
                 "UPDATE wa_users SET " . implode(", ", $fields) . " WHERE id = ?",
                 $params
             );
+
+            $changed = array_map(static fn (string $f): string => trim(explode('=', $f)[0]), $fields);
+            $this->logAudit($db, (int)$user["id"], $id, "admin_user_update", "web", ["fields" => $changed]);
+
+            if (array_key_exists("is_active", $data)) {
+                $newActive = $this->boolInt($data["is_active"]);
+                if ((int)$existing["is_active"] !== $newActive) {
+                    $this->logAudit($db, (int)$user["id"], $id, "admin_user_toggle_active", "web", ["is_active" => $newActive === 1]);
+                }
+            }
+            if (array_key_exists("is_admin", $data)) {
+                $newAdmin = $this->boolInt($data["is_admin"]);
+                if ((int)$existing["is_admin"] !== $newAdmin) {
+                    $this->logAudit($db, (int)$user["id"], $id, "admin_user_toggle_admin", "web", ["is_admin" => $newAdmin === 1]);
+                }
+            }
+
             $this->json(["ok" => true]);
         } catch (\JsonException $e) {
             $this->json(["error" => "Invalid JSON"], 400);
@@ -205,7 +228,7 @@ final class UsersController
                 "UPDATE wa_users SET password_hash = ?, force_password_change = 1 WHERE id = ?",
                 [$hash, $id]
             );
-            $this->logAudit($db, (int)$user["id"], $id, "password_reset", "admin");
+            $this->logAudit($db, (int)$user["id"], $id, "admin_user_reset_password", "web");
             if ($count === 0) {
                 $this->json(["error" => "Not Found"], 404);
                 return;
@@ -285,6 +308,7 @@ final class UsersController
                 $this->json(["error" => "Not Found"], 404);
                 return;
             }
+            $this->logAudit($db, (int)$user["id"], $id, "admin_user_delete", "web", ["is_active" => false]);
             $this->json(["ok" => true]);
         } catch (\Throwable $e) {
             $this->json(["error" => $e->getMessage()], 500);

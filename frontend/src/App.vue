@@ -3,7 +3,7 @@
     <nav class="top">
       <div class="brand">
         Webalbum
-        <span class="version">v0.9.1</span>
+        <span class="version">v1.0.0</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>
@@ -18,6 +18,9 @@
           <div v-if="adminOpen" class="admin-dropdown">
             <button type="button" @click="openUserManagement">User management</button>
             <button type="button" @click="openLogs">View logs</button>
+            <button type="button" @click="openTrash">Trash</button>
+            <button type="button" @click="runCleanStructure">Clean structure</button>
+            <button type="button" @click="reenableAllTags">Re-enable all tags</button>
           </div>
         </div>
       </div>
@@ -406,6 +409,67 @@ export default {
       this.fetchLogsMeta();
       this.fetchLogs();
       this.logsOpen = true;
+    },
+    openTrash() {
+      this.adminOpen = false;
+      this.$router.push("/trash");
+    },
+    async reenableAllTags() {
+      this.adminOpen = false;
+      if (!window.confirm("Re-enable all tags globally and for all users?")) {
+        return;
+      }
+      this.loading = true;
+      try {
+        const res = await fetch("/api/admin/tags/reenable-all", { method: "POST" });
+        if (res.status === 401 || res.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          window.alert(data.error || "Failed to re-enable tags");
+          return;
+        }
+        window.alert("All tags are re-enabled.");
+      } catch (err) {
+        window.alert("Failed to re-enable tags");
+      } finally {
+        this.loading = false;
+      }
+    },
+    async runCleanStructure() {
+      this.adminOpen = false;
+      if (!window.confirm("Remove empty folders across photos/thumbs/trash roots?")) {
+        return;
+      }
+      this.loading = true;
+      try {
+        const res = await fetch("/api/admin/maintenance/clean-structure", { method: "POST" });
+        if (res.status === 401 || res.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          window.alert(data.error || "Clean structure failed");
+          return;
+        }
+        const report = data.report || {};
+        const parts = ["photos", "thumbs", "trash", "trash_thumbs"].map((key) => {
+          const row = report[key] || {};
+          const deleted = Number(row.deleted || 0);
+          const blocked = Number(row.skipped_due_to_trash_blocker || 0);
+          return `${key}: deleted ${deleted}, blocked ${blocked}`;
+        });
+        window.alert(`Clean structure done\n${parts.join("\n")}`);
+      } catch (err) {
+        window.alert("Clean structure failed");
+      } finally {
+        this.loading = false;
+      }
     },
     closeLogs() {
       this.logsOpen = false;
@@ -1666,8 +1730,27 @@ button:disabled {
   object-fit: contain;
 }
 
+.viewer-video {
+  display: block;
+  max-width: 95vw;
+  max-height: calc(90vh - 72px);
+  width: auto;
+  height: auto;
+  background: #000;
+}
+
 .viewer-placeholder {
   color: #bbb;
+}
+
+.viewer-tags {
+  padding: 8px 14px 12px;
+  font-size: 12px;
+  color: #d8d8d8;
+  background: #161616;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nav-btn {

@@ -2,7 +2,7 @@
   <div class="page">
     <header class="hero">
       <h1>Tag Admin</h1>
-      <p>Mark noisy tags and pin important ones.</p>
+      <p>Control tag visibility for global and personal scope.</p>
     </header>
 
     <section class="panel">
@@ -14,6 +14,10 @@
         <label>
           Limit
           <input v-model.number="limit" type="number" min="10" max="200" />
+        </label>
+        <label v-if="isAdmin" class="checkbox">
+          <input type="checkbox" v-model="revealHidden" />
+          Reveal hidden tags
         </label>
         <button class="inline" :disabled="loading" @click="fetchTags">Refresh</button>
         <button class="inline" :disabled="loading || !hasChanges" @click="saveAll">Save</button>
@@ -46,9 +50,8 @@
           <tr>
             <th>Tag</th>
             <th>Variants</th>
-            <th>Noise</th>
-            <th>Pinned</th>
-            <th>Status</th>
+            <th v-if="isAdmin">Enabled (Global)</th>
+            <th>Enabled<span v-if="isAdmin"> (Personal)</span></th>
           </tr>
         </thead>
         <tbody>
@@ -59,14 +62,11 @@
                 {{ variantsDots(row.variants) }}
               </span>
             </td>
-            <td>
-              <input type="checkbox" v-model="row.is_noise" @change="markDirty(row)" />
+            <td v-if="isAdmin">
+              <input type="checkbox" v-model="row.enabled_global" @change="markDirty(row, 'global')" />
             </td>
             <td>
-              <input type="checkbox" v-model="row.pinned" @change="markDirty(row)" />
-            </td>
-            <td class="status">
-              <span v-if="dirty[row.tag]">Modified</span>
+              <input type="checkbox" v-model="row.enabled_personal" @change="markDirty(row, 'personal')" />
             </td>
           </tr>
         </tbody>
@@ -89,10 +89,14 @@ export default {
       loading: false,
       error: "",
       dirty: {},
-      original: {}
+      original: {},
+      isAdmin: false,
+      revealHidden: false
     };
   },
   mounted() {
+    const current = window.__wa_current_user || null;
+    this.isAdmin = !!(current && current.is_admin);
     this.fetchTags();
   },
   computed: {
@@ -116,6 +120,9 @@ export default {
         if (this.query) {
           qs.set("q", this.query);
         }
+        if (this.isAdmin && this.revealHidden) {
+          qs.set("reveal_hidden", "1");
+        }
         qs.set("limit", String(this.limit));
         qs.set("offset", String(offset));
         const res = await fetch(`/api/tags/list?${qs.toString()}`);
@@ -129,17 +136,22 @@ export default {
           this.total = null;
           return;
         }
+
+        this.isAdmin = !!data.is_admin;
         this.rows = (data.rows || []).map((row) => ({
           ...row,
-          is_noise: !!row.is_noise,
-          pinned: !!row.pinned
+          enabled_global: !!row.enabled_global,
+          enabled_personal: !!row.enabled_personal
         }));
         this.total = typeof data.total === "number" ? data.total : 0;
         this.pageInput = this.page;
         this.dirty = {};
         this.original = {};
         this.rows.forEach((row) => {
-          this.original[row.tag] = { is_noise: row.is_noise, pinned: row.pinned };
+          this.original[row.tag] = {
+            enabled_global: !!row.enabled_global,
+            enabled_personal: !!row.enabled_personal
+          };
         });
       } catch (err) {
         this.error = err.message || String(err);
@@ -152,7 +164,9 @@ export default {
       if (!original) {
         return;
       }
-      const changed = row.is_noise !== original.is_noise || row.pinned !== original.pinned;
+      const changed =
+        (!!row.enabled_global !== !!original.enabled_global) ||
+        (!!row.enabled_personal !== !!original.enabled_personal);
       if (changed) {
         this.dirty[row.tag] = true;
       } else {
@@ -183,34 +197,57 @@ export default {
         this.$router.push("/");
         return;
       }
+
       this.loading = true;
       this.error = "";
       try {
-        const requests = tags.map((tag) => {
+        const requests = [];
+        tags.forEach((tag) => {
           const row = this.rows.find((r) => r.tag === tag);
-          if (!row) {
-            return Promise.resolve();
+          const original = this.original[tag];
+          if (!row || !original) {
+            return;
           }
-          const payload = {
-            tag: row.tag,
-            is_noise: row.is_noise ? 1 : 0,
-            pinned: row.pinned ? 1 : 0
-          };
-          return fetch("/api/tags/prefs", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          }).then(async (res) => {
-            if (this.handleAuthError(res)) {
-              return;
-            }
-            if (!res.ok) {
-              const data = await res.json();
-              throw new Error(data.error || "Failed to save tag prefs");
-            }
-          });
+
+          if (this.isAdmin && !!row.enabled_global !== !!original.enabled_global) {
+            requests.push(
+              fetch("/api/tags/prefs", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  tag,
+                  scope: "global",
+                  enabled: row.enabled_global ? 1 : 0
+                })
+              })
+            );
+          }
+
+          if (!!row.enabled_personal !== !!original.enabled_personal) {
+            requests.push(
+              fetch("/api/tags/prefs", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  tag,
+                  scope: "personal",
+                  enabled: row.enabled_personal ? 1 : 0
+                })
+              })
+            );
+          }
         });
-        await Promise.all(requests);
+
+        for (const req of requests) {
+          const res = await req;
+          if (this.handleAuthError(res)) {
+            return;
+          }
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || "Failed to save tag settings");
+          }
+        }
         this.$router.push("/");
       } catch (err) {
         this.error = err.message || String(err);
@@ -261,6 +298,12 @@ export default {
     limit() {
       this.page = 1;
       this.fetchTags();
+    },
+    revealHidden() {
+      if (this.isAdmin) {
+        this.page = 1;
+        this.fetchTags();
+      }
     }
   }
 };

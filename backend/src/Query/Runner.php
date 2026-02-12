@@ -15,7 +15,7 @@ final class Runner
         $this->db = $db;
     }
 
-    public function run(array $query, ?array $restrictIds = null): array
+    public function run(array $query, ?array $restrictIds = null, array $excludeTags = [], array $excludeRelPaths = []): array
     {
         [$whereSql, $params] = Compiler::compileWhere($query["where"]);
 
@@ -33,18 +33,55 @@ final class Runner
             $idClause = " AND files.id IN (" . $placeholders . ")";
         }
 
-        $countSql = "SELECT COUNT(*) AS c FROM files WHERE " . $whereSql . $idClause;
+        $excludeClause = "";
+        $excludeParams = [];
+        if ($excludeTags !== []) {
+            $excludeTags = array_values(array_unique(array_filter(array_map("strval", $excludeTags), fn (string $t): bool => $t !== "")));
+            if ($excludeTags !== []) {
+                $tagPlaceholders = implode(",", array_fill(0, count($excludeTags), "?"));
+                $excludeClause = " AND NOT EXISTS (" .
+                    "SELECT 1 FROM file_tags ft_ex JOIN tags t_ex ON t_ex.id = ft_ex.tag_id " .
+                    "WHERE ft_ex.file_id = files.id AND t_ex.tag IN (" . $tagPlaceholders . ")" .
+                    ")";
+                $excludeParams = $excludeTags;
+            }
+        }
+
+        $excludeRelPathClause = "";
+        $excludeRelPathParams = [];
+        if ($excludeRelPaths !== []) {
+            $excludeRelPaths = array_values(array_unique(array_filter(array_map("strval", $excludeRelPaths), fn (string $p): bool => $p !== "")));
+            if ($excludeRelPaths !== []) {
+                $relPathPlaceholders = implode(",", array_fill(0, count($excludeRelPaths), "?"));
+                $excludeRelPathClause = " AND files.rel_path NOT IN (" . $relPathPlaceholders . ")";
+                $excludeRelPathParams = $excludeRelPaths;
+            }
+        }
+
+         $countSql = "SELECT COUNT(*) AS c FROM files WHERE " . $whereSql . $idClause . $excludeClause . $excludeRelPathClause;
         $countParams = $params;
         if ($restrictIds) {
             $countParams = array_merge($countParams, $restrictIds);
         }
+        if ($excludeParams !== []) {
+            $countParams = array_merge($countParams, $excludeParams);
+        }
+        if ($excludeRelPathParams !== []) {
+            $countParams = array_merge($countParams, $excludeRelPathParams);
+        }
         $countRow = $this->db->query($countSql, $countParams);
         $total = $countRow !== [] ? (int)$countRow[0]["c"] : 0;
 
-        $sql = "SELECT id, path, taken_ts, type FROM files WHERE " . $whereSql . $idClause;
+        $sql = "SELECT id, path, taken_ts, type FROM files WHERE " . $whereSql . $idClause . $excludeClause . $excludeRelPathClause;
         $queryParams = $params;
         if ($restrictIds) {
             $queryParams = array_merge($queryParams, $restrictIds);
+        }
+        if ($excludeParams !== []) {
+            $queryParams = array_merge($queryParams, $excludeParams);
+        }
+        if ($excludeRelPathParams !== []) {
+            $queryParams = array_merge($queryParams, $excludeRelPathParams);
         }
 
         if ($query["sort"]) {
