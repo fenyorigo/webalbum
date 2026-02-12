@@ -7,6 +7,7 @@ namespace WebAlbum\Http\Controllers;
 use WebAlbum\Db\Maria;
 use WebAlbum\Db\SqliteIndex;
 use WebAlbum\UserContext;
+use WebAlbum\SystemTools;
 
 final class ThumbController
 {
@@ -269,21 +270,56 @@ final class ThumbController
 
     private function generateVideoThumb(string $src, string $dest, int $max, int $quality): void
     {
+        $config = require $this->configPath;
+        $toolStatus = SystemTools::checkExternalTools($config);
+        $ffmpegTool = $toolStatus['tools']['ffmpeg'] ?? ['available' => false, 'path' => null];
+        if (!(bool)($ffmpegTool['available'] ?? false)) {
+            $this->generateVideoPlaceholder($dest, $max, $quality);
+            return;
+        }
+
         $jpegQ = $this->ffmpegJpegQ($quality);
         $filter = "scale=w=" . $max . ":h=" . $max . ":force_original_aspect_ratio=decrease," .
             "pad=" . $max . ":" . $max . ":(ow-iw)/2:(oh-ih)/2:color=white";
 
-        $ffmpeg = $this->resolveFfmpegBinary();
+        $ffmpeg = (string)($ffmpegTool['path'] ?? 'ffmpeg');
         $ok = $this->runFfmpegFrame($ffmpeg, $src, $dest, 3, $filter, $jpegQ);
         if (!$ok) {
             $ok = $this->runFfmpegFrame($ffmpeg, $src, $dest, 1, $filter, $jpegQ);
         }
         if (!$ok || !is_file($dest) || filesize($dest) === 0) {
-            throw new \RuntimeException("Failed to generate video thumbnail (ffmpeg)");
+            $this->generateVideoPlaceholder($dest, $max, $quality);
+            return;
         }
 
         // If drawing overlay fails, keep the plain video thumbnail.
         $this->overlayPlayIcon($dest, $quality);
+    }
+
+    private function generateVideoPlaceholder(string $dest, int $max, int $quality): void
+    {
+        $size = max(64, $max);
+        if (function_exists('imagecreatetruecolor')) {
+            $img = imagecreatetruecolor($size, $size);
+            $bg = imagecolorallocate($img, 238, 233, 222);
+            imagefilledrectangle($img, 0, 0, $size, $size, $bg);
+            $circle = imagecolorallocatealpha($img, 20, 20, 20, 75);
+            imagefilledellipse($img, (int)($size / 2), (int)($size / 2), (int)($size * 0.38), (int)($size * 0.38), $circle);
+            $white = imagecolorallocate($img, 255, 255, 255);
+            $tw = (int)round($size * 0.12);
+            $th = (int)round($size * 0.18);
+            $cx = (int)($size / 2);
+            $cy = (int)($size / 2);
+            imagefilledpolygon($img, [
+                $cx - (int)($tw * 0.35), $cy - (int)($th / 2),
+                $cx - (int)($tw * 0.35), $cy + (int)($th / 2),
+                $cx + (int)($tw * 0.65), $cy,
+            ], $white);
+            imagejpeg($img, $dest, max(1, min(100, $quality)));
+            imagedestroy($img);
+            return;
+        }
+        @file_put_contents($dest, '');
     }
 
     private function ffmpegJpegQ(int $quality): int

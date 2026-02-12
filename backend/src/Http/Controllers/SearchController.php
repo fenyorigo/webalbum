@@ -130,17 +130,15 @@ final class SearchController
     {
         $tags = [];
 
-        if (!$isAdmin) {
-            $globalWhere = $this->hasGlobalHiddenColumn($maria) ? "is_hidden = 1" : "1 = 0";
-            if ($globalWhere !== "1 = 0") {
-                $globalRows = $maria->query(
-                    "SELECT tag FROM wa_tag_prefs_global WHERE " . $globalWhere
-                );
-                foreach ($globalRows as $row) {
-                    $tag = (string)($row["tag"] ?? "");
-                    if ($tag !== "") {
-                        $tags[$tag] = true;
-                    }
+        $globalWhere = $this->hasGlobalHiddenColumn($maria) ? "is_hidden = 1" : "1 = 0";
+        if ($globalWhere !== "1 = 0") {
+            $globalRows = $maria->query(
+                "SELECT tag FROM wa_tag_prefs_global WHERE " . $globalWhere
+            );
+            foreach ($globalRows as $row) {
+                $tag = (string)($row["tag"] ?? "");
+                if ($tag !== "") {
+                    $tags[$tag] = true;
                 }
             }
         }

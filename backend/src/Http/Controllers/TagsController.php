@@ -502,9 +502,8 @@ final class TagsController
                 $globalHidden = (int)$g["is_hidden"];
                 $personalHidden = $u["is_hidden"];
 
-                $effectiveHidden = $isAdmin
-                    ? (($personalHidden ?? 0) === 1 ? 1 : 0)
-                    : (($globalHidden === 1 || ($personalHidden ?? 0) === 1) ? 1 : 0);
+                // Global and personal hidden flags both hide tags in search/autocomplete.
+                $effectiveHidden = (($globalHidden === 1 || ($personalHidden ?? 0) === 1) ? 1 : 0);
 
                 $enabledPersonal = $personalHidden === null
                     ? ($globalHidden === 1 ? 0 : 1)

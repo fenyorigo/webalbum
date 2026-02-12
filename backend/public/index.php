@@ -64,6 +64,10 @@ if ($method === "GET" && $path === "/api/health") {
     (new HealthController($root . "/config/config.php"))->handle();
     exit;
 }
+if ($method === "POST" && $path === "/api/admin/tools/recheck") {
+    (new HealthController($root . "/config/config.php"))->recheckTools();
+    exit;
+}
 if ($method === "GET" && $path === "/api/tags") {
     (new TagsController($root . "/config/config.php"))->handleAutocomplete();
     exit;

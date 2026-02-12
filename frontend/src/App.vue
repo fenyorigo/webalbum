@@ -20,6 +20,7 @@
             <button type="button" @click="openLogs">View logs</button>
             <button type="button" @click="openTrash">Trash</button>
             <button type="button" @click="runCleanStructure">Clean structure</button>
+            <button type="button" @click="recheckSystemTools">Recheck system tools</button>
             <button type="button" @click="reenableAllTags">Re-enable all tags</button>
           </div>
         </div>
@@ -29,6 +30,9 @@
         <button class="switch" type="button" @click="logout">Logout</button>
       </div>
     </nav>
+    <div v-if="currentUser && currentUser.is_admin && toolWarnings.length" class="admin-warning">
+      <div v-for="w in toolWarnings" :key="w">⚠ {{ w }}</div>
+    </div>
     <router-view v-if="!forceChangeRequired" />
     <div v-if="forceChangeRequired" class="modal-backdrop">
       <div class="modal">
@@ -333,7 +337,8 @@ export default {
       logsJump: 1,
       logsError: "",
       detailsOpen: false,
-      detailsRow: null
+      detailsRow: null,
+      toolStatus: null
     };
   },
   mounted() {
@@ -354,6 +359,17 @@ export default {
         return 1;
       }
       return Math.max(1, Math.ceil(this.logsTotal / this.logsPageSize));
+    },
+    toolWarnings() {
+      const tools = this.toolStatus && this.toolStatus.tools ? this.toolStatus.tools : {};
+      const warnings = [];
+      if (!tools.ffmpeg || tools.ffmpeg.available !== true) {
+        warnings.push("Video thumbnails disabled: ffmpeg not found on server");
+      }
+      if (!tools.exiftool || tools.exiftool.available !== true) {
+        warnings.push("Media tag editing disabled: exiftool not found on server");
+      }
+      return warnings;
     }
   },
   methods: {
@@ -370,6 +386,9 @@ export default {
         window.__wa_current_user = this.currentUser;
         if (this.currentUser) {
           await this.loadPrefs();
+          if (this.currentUser.is_admin) {
+            await this.loadToolStatus();
+          }
         }
       } catch (err) {
         // ignore
@@ -394,13 +413,59 @@ export default {
       window.__wa_current_user = this.currentUser;
       if (this.currentUser) {
         this.loadPrefs();
+        if (this.currentUser.is_admin) {
+          this.loadToolStatus();
+        } else {
+          this.toolStatus = null;
+        }
       } else {
         this.prefs = null;
+        this.toolStatus = null;
         window.__wa_prefs = null;
       }
     },
     toggleAdmin() {
       this.adminOpen = !this.adminOpen;
+    },
+    async loadToolStatus() {
+      try {
+        const res = await fetch("/api/health");
+        if (!res.ok) {
+          return;
+        }
+        const data = await res.json();
+        this.toolStatus = {
+          tools: data.tools || {},
+          checked_at: data.tools_checked_at || null
+        };
+      } catch (err) {
+        // ignore health errors
+      }
+    },
+    async recheckSystemTools() {
+      this.adminOpen = false;
+      this.loading = true;
+      try {
+        const res = await fetch("/api/admin/tools/recheck", { method: "POST" });
+        if (res.status === 401 || res.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          window.alert(data.error || "Tool recheck failed");
+          return;
+        }
+        this.toolStatus = {
+          tools: data.tools || {},
+          checked_at: data.tools_checked_at || null
+        };
+      } catch (err) {
+        window.alert("Tool recheck failed");
+      } finally {
+        this.loading = false;
+      }
     },
     openLogs() {
       this.adminOpen = false;
@@ -1926,5 +1991,20 @@ button:disabled {
 
 .user-edit {
   width: min(500px, 90vw);
+}
+</style>
+
+
+<style>
+.admin-warning {
+  margin: -10px 0 14px;
+  border: 1px solid #e2b8ae;
+  background: #fff4f1;
+  color: #7a1f10;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  display: grid;
+  gap: 4px;
 }
 </style>
