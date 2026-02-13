@@ -15,7 +15,7 @@ final class Runner
         $this->db = $db;
     }
 
-    public function run(array $query, ?array $restrictIds = null, array $excludeTags = [], array $excludeRelPaths = []): array
+    public function run(array $query, ?array $restrictIds = null, array $excludeTags = [], array $excludeRelPaths = [], ?string $folderRelPath = null, ?int $folderId = null): array
     {
         [$whereSql, $params] = Compiler::compileWhere($query["where"]);
 
@@ -49,6 +49,22 @@ final class Runner
 
         $excludeRelPathClause = "";
         $excludeRelPathParams = [];
+
+        $folderClause = "";
+        $folderParams = [];
+        if (is_int($folderId) && $folderId > 0) {
+            // Tree selection: direct folder only (no subtree).
+            $folderClause = " AND files.directory_id = ?";
+            $folderParams[] = $folderId;
+        } elseif (is_string($folderRelPath) && $folderRelPath !== "") {
+            $normalizedFolder = trim(str_replace("\\", "/", $folderRelPath), "/");
+            if ($normalizedFolder !== "") {
+                // Optional rel_path API filter: include subtree.
+                $folderClause = " AND (files.rel_path = ? OR files.rel_path LIKE ? ESCAPE '\\')";
+                $folderParams[] = $normalizedFolder;
+                $folderParams[] = self::escapeLike($normalizedFolder) . "/%";
+            }
+        }
         if ($excludeRelPaths !== []) {
             $excludeRelPaths = array_values(array_unique(array_filter(array_map("strval", $excludeRelPaths), fn (string $p): bool => $p !== "")));
             if ($excludeRelPaths !== []) {
@@ -58,7 +74,7 @@ final class Runner
             }
         }
 
-         $countSql = "SELECT COUNT(*) AS c FROM files WHERE " . $whereSql . $idClause . $excludeClause . $excludeRelPathClause;
+         $countSql = "SELECT COUNT(*) AS c FROM files WHERE " . $whereSql . $idClause . $excludeClause . $excludeRelPathClause . $folderClause;
         $countParams = $params;
         if ($restrictIds) {
             $countParams = array_merge($countParams, $restrictIds);
@@ -69,10 +85,13 @@ final class Runner
         if ($excludeRelPathParams !== []) {
             $countParams = array_merge($countParams, $excludeRelPathParams);
         }
+        if ($folderParams !== []) {
+            $countParams = array_merge($countParams, $folderParams);
+        }
         $countRow = $this->db->query($countSql, $countParams);
         $total = $countRow !== [] ? (int)$countRow[0]["c"] : 0;
 
-        $sql = "SELECT id, path, taken_ts, type FROM files WHERE " . $whereSql . $idClause . $excludeClause . $excludeRelPathClause;
+        $sql = "SELECT id, path, taken_ts, type FROM files WHERE " . $whereSql . $idClause . $excludeClause . $excludeRelPathClause . $folderClause;
         $queryParams = $params;
         if ($restrictIds) {
             $queryParams = array_merge($queryParams, $restrictIds);
@@ -82,6 +101,9 @@ final class Runner
         }
         if ($excludeRelPathParams !== []) {
             $queryParams = array_merge($queryParams, $excludeRelPathParams);
+        }
+        if ($folderParams !== []) {
+            $queryParams = array_merge($queryParams, $folderParams);
         }
 
         if ($query["sort"]) {
@@ -104,5 +126,10 @@ final class Runner
             "rows" => $rows,
             "total" => $total,
         ];
+    }
+
+    private static function escapeLike(string $value): string
+    {
+        return str_replace(["\\", "%", "_"], ["\\\\", "\\%", "\\_"], $value);
     }
 }

@@ -1,5 +1,14 @@
 <template>
   <div class="page">
+    <div class="search-layout">
+      <aside class="folders-sidebar">
+        <folder-tree
+          :selected-rel-path="selectedFolder ? selectedFolder.rel_path : ''"
+          @select="selectFolder"
+          @clear="clearFolderFilter"
+        />
+      </aside>
+      <div class="search-main">
     <header class="hero">
       <h1>Webalbum</h1>
       <p>Query your indexer DB (read-only).</p>
@@ -122,6 +131,8 @@
       </div>
       <div class="row actions">
         <button @click="runSearch" :disabled="loading">Search</button>
+        <span v-if="selectedFolder" class="pill folder-pill" :title="selectedFolder.rel_path">Folder: {{ selectedFolder.rel_path }}</span>
+        <button v-if="selectedFolder" class="clear" type="button" @click="clearFolderFilter">Clear folder filter</button>
         <button @click="openSaveModal" :disabled="loading">Save search</button>
         <button @click="clearCriteria" :disabled="loading">Clear search criteria</button>
         <label class="checkbox">
@@ -260,6 +271,8 @@
       </div>
       <pre v-if="debugInfo" class="debug">{{ debugInfo }}</pre>
     </section>
+      </div>
+    </div>
     <image-viewer
       :results="results"
       :start-id="viewerStartId"
@@ -311,10 +324,11 @@ import ResultsGrid from "../components/ResultsGrid.vue";
 import ResultsList from "../components/ResultsList.vue";
 import ImageViewer from "../components/ImageViewer.vue";
 import VideoViewer from "../components/VideoViewer.vue";
+import FolderTree from "../components/FolderTree.vue";
 
 export default {
   name: "SearchPage",
-  components: { ResultsGrid, ResultsList, ImageViewer, VideoViewer },
+  components: { ResultsGrid, ResultsList, ImageViewer, VideoViewer, FolderTree },
   data() {
     return {
       loading: false,
@@ -361,7 +375,8 @@ export default {
       loadedSearchId: null,
       loadedSearchName: "",
       loadedQuery: null,
-      loadedSnapshot: ""
+      loadedSnapshot: "",
+      selectedFolder: null
     };
   },
   mounted() {
@@ -371,6 +386,7 @@ export default {
       this.viewMode = window.matchMedia("(min-width: 1024px)").matches ? "grid" : "list";
     }
     this.currentUser = window.__wa_current_user || null;
+    this.restoreFolderFilter();
     this.applyLoadFromRoute();
     window.addEventListener("wa-auth-changed", this.onUserChanged);
     window.addEventListener("wa-prefs-changed", this.onPrefsChanged);
@@ -439,10 +455,11 @@ export default {
       }
     },
     applyQuery(query, name, options = {}) {
-      const { form, page, pageInput } = this.builderFromQuery(query);
+      const { form, page, pageInput, folder } = this.builderFromQuery(query);
       this.suspendAuto = true;
       this.form = form;
       this.page = page;
+      this.selectedFolder = folder || null;
       this.pageInput = pageInput;
       this.activeTagIndex = null;
       this.suggestions = [];
@@ -451,6 +468,7 @@ export default {
       this.loadedSearchName = name || "";
       this.loadedQuery = JSON.parse(JSON.stringify(query));
       this.loadedSnapshot = this.snapshotFromQuery(this.loadedQuery);
+      this.persistFolderFilter();
       this.savedBanner = name ? `Loaded from saved search: ${name}` : "";
       if (options.autoRun) {
         this.$nextTick(() => {
@@ -461,6 +479,7 @@ export default {
     builderFromQuery(query) {
       const where = query.where && typeof query.where === "object" ? query.where : {};
       const builder = this.builderFromWhere(where);
+      const folder = builder.folder || null;
       builder.form.sortField = query.sort && query.sort.field ? query.sort.field : "path";
       builder.form.sortDir = query.sort && query.sort.dir ? query.sort.dir : "asc";
       builder.form.limit = Number.isFinite(query.limit) ? query.limit : 50;
@@ -468,6 +487,7 @@ export default {
       const offset = Number.isFinite(query.offset) ? query.offset : 0;
       builder.page = Math.floor(offset / limit) + 1;
       builder.pageInput = builder.page;
+      builder.folder = folder;
       return builder;
     },
     builderFromWhere(where) {
@@ -494,6 +514,9 @@ export default {
       const pathItem = items.find((item) => item && item.field === "path");
       const typeItem = items.find((item) => item && item.field === "type" && item.op === "is");
       const takenItem = items.find((item) => item && item.field === "taken");
+
+      const folderRelPath = typeof where.folder_rel_path === "string" ? where.folder_rel_path.trim() : "";
+      const folderId = Number.isInteger(where.folder_id) ? where.folder_id : null;
 
       const form = {
         tags: [],
@@ -527,7 +550,15 @@ export default {
         }
       }
 
-      return { form, page: 1, pageInput: 1 };
+      const folder = folderRelPath
+        ? {
+            id: folderId,
+            rel_path: folderRelPath,
+            name: folderRelPath.split("/").filter(Boolean).pop() || folderRelPath
+          }
+        : null;
+
+      return { form, page: 1, pageInput: 1, folder };
     },
     whereFromBuilder() {
       const items = [];
@@ -569,11 +600,19 @@ export default {
         items.push({ field: "type", op: "is", value: this.form.type });
       }
 
-      return {
+      const where = {
         group: "ALL",
-        items: items.length ? items : [{ field: "type", op: "is", value: "image" }],
+        items,
         only_favorites: this.form.onlyFavorites
       };
+      if (this.selectedFolder && this.selectedFolder.id) {
+        // Tree-selected folder should filter direct files only.
+        where.folder_id = this.selectedFolder.id;
+      } else if (this.selectedFolder && this.selectedFolder.rel_path) {
+        // Backward-compatible fallback for saved payloads.
+        where.folder_rel_path = this.selectedFolder.rel_path;
+      }
+      return where;
     },
     snapshotFromQuery(query) {
       const snapshot = {
@@ -680,6 +719,9 @@ export default {
       if (this.form.path) {
         parts.push(`path ${this.form.path}`);
       }
+      if (this.selectedFolder && this.selectedFolder.rel_path) {
+        parts.push(`in ${this.selectedFolder.rel_path}`);
+      }
       if (parts.length) {
         return parts.join(" · ");
       }
@@ -726,6 +768,56 @@ export default {
         this.saveError = "Failed to save search";
       } finally {
         this.loading = false;
+      }
+    },
+
+    selectFolder(folder) {
+      if (!folder || !folder.rel_path) {
+        return;
+      }
+      this.selectedFolder = {
+        id: folder.id || null,
+        rel_path: folder.rel_path,
+        name: folder.name || folder.rel_path
+      };
+      this.persistFolderFilter();
+      this.page = 1;
+      this.runSearch();
+    },
+    clearFolderFilter() {
+      this.selectedFolder = null;
+      this.persistFolderFilter();
+      this.page = 1;
+      this.runSearch();
+    },
+    persistFolderFilter() {
+      try {
+        if (this.selectedFolder && this.selectedFolder.rel_path) {
+          window.localStorage.setItem("wa_folder_filter", JSON.stringify(this.selectedFolder));
+        } else {
+          window.localStorage.removeItem("wa_folder_filter");
+        }
+      } catch (_err) {
+        // ignore storage errors
+      }
+    },
+    restoreFolderFilter() {
+      try {
+        const raw = window.localStorage.getItem("wa_folder_filter");
+        if (!raw) {
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed.rel_path !== "string" || parsed.rel_path.trim() === "") {
+          return;
+        }
+        this.selectedFolder = {
+          id: Number.isInteger(parsed.id) ? parsed.id : null,
+          rel_path: parsed.rel_path.trim(),
+          name: parsed.name || parsed.rel_path.split("/").filter(Boolean).pop() || parsed.rel_path
+        };
+      } catch (_err) {
+        // ignore storage errors
       }
     },
     addTagRow() {
@@ -1039,6 +1131,8 @@ This is reversible from Admin -> Trash.`);
       this.loadedSearchName = "";
       this.loadedQuery = null;
       this.loadedSnapshot = "";
+      this.selectedFolder = null;
+      this.persistFolderFilter();
       this.suspendAuto = false;
       this.runSearch();
     },
@@ -1145,3 +1239,34 @@ This is reversible from Admin -> Trash.`);
   }
 };
 </script>
+
+
+<style scoped>
+.search-layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.folders-sidebar {
+  position: sticky;
+  top: 12px;
+}
+.search-main {
+  min-width: 0;
+}
+.folder-pill {
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 980px) {
+  .search-layout {
+    grid-template-columns: 1fr;
+  }
+  .folders-sidebar {
+    position: static;
+  }
+}
+</style>

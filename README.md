@@ -4,7 +4,7 @@ Backend and frontend for browsing an indexer-produced SQLite database (read-only
 
 ## Release
 
-- Current version: `1.0.0`
+- Current version: `1.1.0`
 - See `CHANGELOG.md` for release notes.
 
 ## Backend
@@ -23,6 +23,10 @@ Backend and frontend for browsing an indexer-produced SQLite database (read-only
 
 `GET /api/tags/list` (admin list with `q`, `limit`, `offset`)
 
+`GET /api/tree/roots` (top-level indexed folders)
+
+`GET /api/tree?parent_id=<id>` (child folders)
+
 `POST /api/tags/prefs` (body: `{"tag":"...", "is_noise":0|1, "pinned":0|1}`)
 
 `GET /api/media/{id}/tags`
@@ -38,7 +42,8 @@ Request body:
     "items": [
       {"field": "tag", "op": "is", "value": "Alice"},
       {"field": "taken", "op": "between", "value": ["2020-01-01", "2020-12-31"]}
-    ]
+    ],
+    "folder_rel_path": "2020/2020-01-15 Budapest"
   },
   "sort": {"field": "taken", "dir": "desc"},
   "limit": 200
@@ -87,6 +92,14 @@ export WA_THUMB_MAX="256"
 export WA_THUMB_QUALITY="75"
 export WA_EXIFTOOL_PATH="exiftool"
 ```
+
+
+## System tool checks
+
+- On backend startup/first use, Webalbum checks `ffmpeg` and `exiftool` availability and caches the result in `backend/var/external_tools_status.json`.
+- Health endpoint includes tool status: `GET /api/health` (`tools` + `tools_checked_at`).
+- Admin can force a refresh from UI (`Admin ▾` -> `Recheck system tools`) or via API: `POST /api/admin/tools/recheck`.
+- If `ffmpeg` is missing, video thumbnail generation is disabled gracefully (placeholder thumbs are served).
 
 ## MySQL Tag Prefs
 
@@ -160,3 +173,19 @@ Testing checklist:
 - Confirm first request generates thumbs, subsequent requests reuse them.
 - Confirm if an image is modified, thumb regenerates (mtime check).
 - Confirm it works on mac and Fedora where absolute paths differ (fallback to `WA_PHOTOS_ROOT + rel_path`).
+
+
+## Tree API examples
+
+```bash
+# Top-level folders
+curl -b cookies.txt "http://localhost:8445/api/tree/roots"
+
+# Children of a folder
+curl -b cookies.txt "http://localhost:8445/api/tree?parent_id=42"
+
+# Search filtered to a folder subtree
+curl -b cookies.txt -H "Content-Type: application/json" \
+  -X POST "http://localhost:8445/api/search" \
+  --data '{"where":{"group":"ALL","items":[{"field":"type","op":"is","value":"image"}],"folder_rel_path":"2020/2020-01-15 Budapest"},"sort":{"field":"path","dir":"asc"},"limit":50,"offset":0}'
+```

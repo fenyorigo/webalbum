@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 - 2026-02-13
+
+- Added folder tree view for browsing the gallery
+- Folder selection filters media by subtree
+- Folder browsing integrates with existing search builder
+- Direct media display respects media type filter (Any / Image / Video)
+- Improved navigation for large archives
+
 ## 1.0.0 - 2026-02-12
 
 Production release.

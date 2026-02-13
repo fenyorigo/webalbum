@@ -24,8 +24,12 @@ final class Compiler
             }
         }
 
-        $glue = $group["group"] === "ALL" ? " AND " : " OR ";
-        $sql = "(" . implode($glue, $parts) . ")";
+        if ($parts === []) {
+            $sql = $group["group"] === "ALL" ? "(1=1)" : "(1=0)";
+        } else {
+            $glue = $group["group"] === "ALL" ? " AND " : " OR ";
+            $sql = "(" . implode($glue, $parts) . ")";
+        }
         if ($group["not"]) {
             return "(NOT " . $sql . ")";
         }

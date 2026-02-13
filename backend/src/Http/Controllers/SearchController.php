@@ -69,12 +69,22 @@ final class SearchController
 
             $excludeTags = [];
             $excludeRelPaths = [];
+            $folderRelPath = null;
+            $folderId = null;
             if ($maria !== null && $userId > 0) {
                 $excludeTags = $this->hiddenTagsForSearch($maria, $userId, $isAdmin);
                 $excludeRelPaths = AdminTrashController::activeTrashedRelPaths($maria);
             }
+            if ($query["folder_id"] !== null) {
+                $folderId = (int)$query["folder_id"];
+            } elseif ($query["folder_rel_path"] !== null) {
+                $folderRelPath = trim(str_replace("\\", "/", (string)$query["folder_rel_path"]), "/");
+                if ($folderRelPath === "") {
+                    $folderRelPath = null;
+                }
+            }
 
-            $result = $runner->run($query, $restrictIds, $excludeTags, $excludeRelPaths);
+            $result = $runner->run($query, $restrictIds, $excludeTags, $excludeRelPaths, $folderRelPath, $folderId);
 
             $items = $result["rows"];
             if ($userId > 0 && $maria !== null && $items !== []) {
@@ -125,6 +135,7 @@ final class SearchController
             $this->json(["error" => $e->getMessage()], 400);
         }
     }
+
 
     private function hiddenTagsForSearch(Maria $maria, int $userId, bool $isAdmin): array
     {

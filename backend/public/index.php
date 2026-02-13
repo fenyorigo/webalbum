@@ -36,6 +36,7 @@ use WebAlbum\Http\Controllers\PrefsController;
 use WebAlbum\Http\Controllers\AuditLogController;
 use WebAlbum\Http\Controllers\AdminTrashController;
 use WebAlbum\Http\Controllers\MaintenanceController;
+use WebAlbum\Http\Controllers\TreeController;
 
 $method = $_SERVER["REQUEST_METHOD"] ?? "GET";
 $uri = $_SERVER["REQUEST_URI"] ?? "/";
@@ -66,6 +67,14 @@ if ($method === "GET" && $path === "/api/health") {
 }
 if ($method === "POST" && $path === "/api/admin/tools/recheck") {
     (new HealthController($root . "/config/config.php"))->recheckTools();
+    exit;
+}
+if ($method === "GET" && $path === "/api/tree/roots") {
+    (new TreeController($root . "/config/config.php"))->roots();
+    exit;
+}
+if ($method === "GET" && $path === "/api/tree") {
+    (new TreeController($root . "/config/config.php"))->children();
     exit;
 }
 if ($method === "GET" && $path === "/api/tags") {

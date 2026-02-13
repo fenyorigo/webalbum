@@ -28,12 +28,34 @@ final class Model
             throw new \InvalidArgumentException("where must be an object");
         }
         $onlyFavorites = false;
+        $folderRelPath = null;
+        $folderId = null;
         if (array_key_exists("only_favorites", $whereInput)) {
             if (!is_bool($whereInput["only_favorites"])) {
                 throw new \InvalidArgumentException("where.only_favorites must be a boolean");
             }
             $onlyFavorites = $whereInput["only_favorites"];
             unset($whereInput["only_favorites"]);
+        }
+        if (array_key_exists("folder_rel_path", $whereInput)) {
+            $value = $whereInput["folder_rel_path"];
+            if (!is_string($value)) {
+                throw new \InvalidArgumentException("where.folder_rel_path must be a string");
+            }
+            $value = trim(str_replace("\\", "/", $value), "/");
+            if ($value === "") {
+                throw new \InvalidArgumentException("where.folder_rel_path must not be empty");
+            }
+            $folderRelPath = $value;
+            unset($whereInput["folder_rel_path"]);
+        }
+        if (array_key_exists("folder_id", $whereInput)) {
+            $value = $whereInput["folder_id"];
+            if (!is_int($value) || $value < 1) {
+                throw new \InvalidArgumentException("where.folder_id must be a positive integer");
+            }
+            $folderId = $value;
+            unset($whereInput["folder_id"]);
         }
         $where = self::validateGroup($whereInput);
 
@@ -64,6 +86,8 @@ final class Model
             "limit" => $limit,
             "offset" => $offset,
             "only_favorites" => $onlyFavorites,
+            "folder_rel_path" => $folderRelPath,
+            "folder_id" => $folderId,
         ];
     }
 
@@ -100,8 +124,8 @@ final class Model
         }
 
         $items = $group["items"] ?? null;
-        if (!is_array($items) || $items === []) {
-            throw new \InvalidArgumentException("where.items must be a non-empty array");
+        if (!is_array($items)) {
+            throw new \InvalidArgumentException("where.items must be an array");
         }
 
         $not = $group["not"] ?? false;
