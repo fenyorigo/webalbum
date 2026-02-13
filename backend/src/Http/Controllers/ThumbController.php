@@ -8,6 +8,7 @@ use WebAlbum\Db\Maria;
 use WebAlbum\Db\SqliteIndex;
 use WebAlbum\UserContext;
 use WebAlbum\SystemTools;
+use WebAlbum\Security\PathGuard;
 
 final class ThumbController
 {
@@ -125,21 +126,13 @@ final class ThumbController
     private function resolveOriginalPath(string $path, string $relPath, string $photosRoot): ?string
     {
         if ($path !== "" && is_file($path)) {
-            return $path;
+            return PathGuard::assertInsideRoot($path, $photosRoot);
         }
         $fallback = $this->safeJoin($photosRoot, $relPath);
         if ($fallback === null) {
             return null;
         }
-        $realRoot = realpath($photosRoot);
-        $realFile = realpath($fallback);
-        if ($realRoot === false || $realFile === false) {
-            return null;
-        }
-        if (!str_starts_with($realFile, $realRoot . DIRECTORY_SEPARATOR)) {
-            return null;
-        }
-        return $realFile;
+        return PathGuard::assertInsideRoot($fallback, $photosRoot);
     }
 
     private function safeJoin(string $root, string $relPath): ?string

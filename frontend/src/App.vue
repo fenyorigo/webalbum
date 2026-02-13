@@ -3,7 +3,7 @@
     <nav class="top">
       <div class="brand">
         Webalbum
-        <span class="version">v1.1.0</span>
+        <span class="version">v1.1.1</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>

@@ -1,0 +1,100 @@
+WebAlbum Security Self-Review
+Date: 2026-02-13
+Reviewer: Codex (static code review)
+
+Scope reviewed
+- Backend entry/routing and session setup:
+  - backend/public/index.php
+- Authentication/user/session paths:
+  - backend/src/Http/Controllers/AuthController.php
+  - backend/src/UserContext.php
+  - backend/src/Http/Controllers/UsersController.php
+  - backend/src/Http/Controllers/SetupController.php
+- Media/file serving and processing:
+  - backend/src/Http/Controllers/FileController.php
+  - backend/src/Http/Controllers/VideoController.php
+  - backend/src/Http/Controllers/ThumbController.php
+  - backend/src/Http/Controllers/DownloadController.php
+  - backend/src/Http/Controllers/MediaTagsController.php
+- Query/search and filtering paths:
+  - backend/src/Http/Controllers/SearchController.php
+  - backend/src/Query/Model.php
+  - backend/src/Query/Compiler.php
+  - backend/src/Query/Runner.php
+- Health/ops endpoints:
+  - backend/src/Http/Controllers/HealthController.php
+
+Summary
+- Vulnerabilities found: YES
+- Immediate-priority vulnerabilities to close: 2
+- Medium-priority security gaps: 3
+- No code corrections were applied in this review.
+
+Findings (prioritized)
+
+[HIGH] 1) Trusted SQLite absolute path can bypass photos-root boundary checks in some endpoints
+- Impact:
+  - If the SQLite DB is tampered (or generated from untrusted input), an attacker can point files.path to arbitrary server files and retrieve/archive them via authenticated APIs.
+  - This is an arbitrary local file read risk under web server permissions.
+- Evidence:
+  - backend/src/Http/Controllers/FileController.php:83-85
+    - returns files.path directly when is_file(path), without requiring WA_PHOTOS_ROOT containment.
+  - backend/src/Http/Controllers/ThumbController.php:127-129
+    - same trust pattern for files.path before root-bound fallback.
+  - backend/src/Http/Controllers/DownloadController.php:98-106
+    - uses files.path directly for ZIP inclusion, no root-bound verification.
+- Priority: Close now.
+
+[HIGH] 2) File download path validation is weaker than video/media-tag paths
+- Impact:
+  - Inconsistent path validation allows broader file surface via /api/download than /api/video and /api/media/{id}/tags.
+  - Increases blast radius if DB row integrity is compromised.
+- Evidence:
+  - backend/src/Http/Controllers/DownloadController.php:98-106
+  - Contrast (stronger checks):
+    - backend/src/Http/Controllers/VideoController.php:155-183
+    - backend/src/Http/Controllers/MediaTagsController.php:178-205
+- Priority: Close now (same remediation track as #1).
+
+[MEDIUM] 3) /api/health exposes internal system details without auth
+- Impact:
+  - Information disclosure (absolute DB path, file counts, tool availability and paths) can aid recon.
+- Evidence:
+  - backend/public/index.php:64-66
+  - backend/src/Http/Controllers/HealthController.php:41-55 (db.path, counts, tools)
+- Priority: Medium.
+
+[MEDIUM] 4) No login throttling / lockout controls
+- Impact:
+  - Brute-force risk against /api/auth/login.
+- Evidence:
+  - backend/src/Http/Controllers/AuthController.php:20-47
+  - No attempt counters, no IP/user delay, no temporary lockouts.
+- Priority: Medium.
+
+[MEDIUM] 5) Session cookie security depends on deployment scheme and may be non-secure over HTTP
+- Impact:
+  - If app is served over plain HTTP, session cookie may be sent without Secure flag, increasing session theft risk.
+- Evidence:
+  - backend/public/index.php:45-53
+  - secure flag set dynamically from request scheme.
+- Priority: Medium.
+
+Additional observations (non-blocking)
+- Good practices observed:
+  - Prepared statements/parameterized SQL broadly used.
+  - Passwords use password_hash/password_verify.
+  - session_regenerate_id(true) on successful login.
+  - Admin checks present for sensitive admin endpoints.
+  - Media tag write uses proc_open with argument array and bypass_shell=true.
+- Not classified as vulnerabilities in this pass:
+  - No obvious reflected/stored XSS in backend JSON responses.
+  - No obvious SQL injection in reviewed query paths.
+
+Recommended closure order
+1) Unify strict path containment checks (WA_PHOTOS_ROOT) across FileController, ThumbController, DownloadController.
+2) Restrict /api/health (auth/admin) or sanitize output.
+3) Add login throttling (per IP + per username, with audit visibility).
+4) Force secure-cookie policy in production deployments (and HSTS at web server level).
+
+End of report.

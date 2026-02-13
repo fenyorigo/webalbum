@@ -29,21 +29,32 @@ final class AuthController
                 return;
             }
             $db = $this->connect();
+            $clientIp = $this->clientIp();
+            $retryAfter = $this->currentThrottleDelay($clientIp, $username);
+            if ($retryAfter > 0) {
+                header("Retry-After: " . (string)$retryAfter);
+                $this->logAudit($db, null, null, "auth_throttle", "api", ["username" => $username, "retry_after" => $retryAfter]);
+                $this->json(["error" => "Too many login attempts. Try again later."], 429);
+                return;
+            }
             $rows = $db->query(
                 "SELECT id, username, display_name, password_hash, is_admin, force_password_change\n" .
                 "FROM wa_users WHERE username = ? AND is_active = 1",
                 [$username]
             );
             if ($rows === []) {
+                $this->registerFailedAttempt($clientIp, $username);
                 $this->json(["error" => "Invalid credentials"], 401);
                 return;
             }
             $user = $rows[0];
             $hash = (string)$user["password_hash"];
             if ($hash === "" || !password_verify($password, $hash)) {
+                $this->registerFailedAttempt($clientIp, $username);
                 $this->json(["error" => "Invalid credentials"], 401);
                 return;
             }
+            $this->clearThrottle($clientIp, $username);
             session_regenerate_id(true);
             $_SESSION["wa_user_id"] = (int)$user["id"];
             $mustChange = (int)($user["force_password_change"] ?? 0) === 1;
@@ -140,6 +151,120 @@ final class AuthController
             $this->json(["error" => "Invalid JSON"], 400);
         } catch (\Throwable $e) {
             $this->json(["error" => $e->getMessage()], 500);
+        }
+    }
+
+
+    private function clientIp(): string
+    {
+        $xff = (string)($_SERVER["HTTP_X_FORWARDED_FOR"] ?? "");
+        if ($xff !== "") {
+            $first = trim(explode(",", $xff)[0] ?? "");
+            if ($first !== "") {
+                return $first;
+            }
+        }
+        return (string)($_SERVER["REMOTE_ADDR"] ?? "unknown");
+    }
+
+    private function currentThrottleDelay(string $ip, string $username): int
+    {
+        $now = time();
+        $key = $this->throttleKey($ip, $username);
+        $entry = $this->mutateThrottleState(function (array &$state) use ($key, $now): array {
+            $entry = $state[$key] ?? ["attempts" => [], "blocked_until" => 0];
+            $attempts = array_values(array_filter((array)($entry["attempts"] ?? []), static fn ($ts): bool => (int)$ts > ($now - 300)));
+            $blockedUntil = (int)($entry["blocked_until"] ?? 0);
+            if ($blockedUntil <= $now) {
+                $blockedUntil = 0;
+            }
+            $entry = ["attempts" => $attempts, "blocked_until" => $blockedUntil];
+            if ($attempts === [] && $blockedUntil === 0) {
+                unset($state[$key]);
+            } else {
+                $state[$key] = $entry;
+            }
+            return $entry;
+        });
+
+        $blockedUntil = (int)($entry["blocked_until"] ?? 0);
+        return $blockedUntil > $now ? ($blockedUntil - $now) : 0;
+    }
+
+    private function registerFailedAttempt(string $ip, string $username): void
+    {
+        $now = time();
+        $key = $this->throttleKey($ip, $username);
+        $this->mutateThrottleState(function (array &$state) use ($key, $now): void {
+            $entry = $state[$key] ?? ["attempts" => [], "blocked_until" => 0];
+            $attempts = array_values(array_filter((array)($entry["attempts"] ?? []), static fn ($ts): bool => (int)$ts > ($now - 300)));
+            $attempts[] = $now;
+            $count = count($attempts);
+            $blockedUntil = (int)($entry["blocked_until"] ?? 0);
+            if ($count >= 5) {
+                $step = max(0, $count - 5);
+                $delay = min(900, 30 * (2 ** $step));
+                $blockedUntil = max($blockedUntil, $now + $delay);
+            }
+            $state[$key] = ["attempts" => $attempts, "blocked_until" => $blockedUntil];
+        });
+    }
+
+    private function clearThrottle(string $ip, string $username): void
+    {
+        $key = $this->throttleKey($ip, $username);
+        $this->mutateThrottleState(function (array &$state) use ($key): void {
+            unset($state[$key]);
+        });
+    }
+
+    private function throttleKey(string $ip, string $username): string
+    {
+        return hash("sha256", strtolower($ip) . "|" . strtolower($username));
+    }
+
+    private function throttleStatePath(): string
+    {
+        return dirname($this->configPath, 2) . "/var/auth_throttle.json";
+    }
+
+    private function mutateThrottleState(callable $mutator): mixed
+    {
+        $path = $this->throttleStatePath();
+        $dir = dirname($path);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+
+        $fp = fopen($path, "c+");
+        if ($fp === false) {
+            return null;
+        }
+
+        try {
+            if (!flock($fp, LOCK_EX)) {
+                return null;
+            }
+            rewind($fp);
+            $raw = stream_get_contents($fp);
+            $state = [];
+            if (is_string($raw) && trim($raw) !== "") {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded)) {
+                    $state = $decoded;
+                }
+            }
+
+            $result = $mutator($state);
+
+            rewind($fp);
+            ftruncate($fp, 0);
+            fwrite($fp, json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            fflush($fp);
+            flock($fp, LOCK_UN);
+            return $result;
+        } finally {
+            fclose($fp);
         }
     }
 

@@ -4,7 +4,7 @@ Backend and frontend for browsing an indexer-produced SQLite database (read-only
 
 ## Release
 
-- Current version: `1.1.0`
+- Current version: `1.1.1`
 - See `CHANGELOG.md` for release notes.
 
 ## Backend
@@ -101,6 +101,16 @@ export WA_EXIFTOOL_PATH="exiftool"
 - Admin can force a refresh from UI (`Admin ▾` -> `Recheck system tools`) or via API: `POST /api/admin/tools/recheck`.
 - If `ffmpeg` is missing, video thumbnail generation is disabled gracefully (placeholder thumbs are served).
 
+
+## Security notes
+
+- Media paths from SQLite are enforced to stay inside `WA_PHOTOS_ROOT` before any stream, thumbnail generation, or ZIP download.
+- Requests that reference files outside `WA_PHOTOS_ROOT` are rejected.
+- `GET /api/health` is admin-only.
+- Login throttling is enabled on `/api/auth/login` (per IP + username) and emits `auth_throttle` audit events when blocked.
+- Session cookie flags are hardened: `HttpOnly`, `SameSite=Lax`, and `Secure` is forced in production (`WEBALBUM_ENV=prod` or `APP_ENV=production`) or when HTTPS / `X-Forwarded-Proto=https` is detected.
+- Deployment expectation: terminate TLS in front of app and forward `X-Forwarded-Proto` correctly when using reverse proxies.
+
 ## MySQL Tag Prefs
 
 Run the migrations in `backend/sql/mysql/001_tag_prefs.sql` and `backend/sql/mysql/002_user_prefs.sql`.
@@ -189,3 +199,12 @@ curl -b cookies.txt -H "Content-Type: application/json" \
   -X POST "http://localhost:8445/api/search" \
   --data '{"where":{"group":"ALL","items":[{"field":"type","op":"is","value":"image"}],"folder_rel_path":"2020/2020-01-15 Budapest"},"sort":{"field":"path","dir":"asc"},"limit":50,"offset":0}'
 ```
+
+
+### Path containment regression check
+
+```bash
+php backend/bin/path_guard_check.php
+```
+
+This check verifies that an outside path such as `/etc/passwd` is rejected by the shared path guard used by file/thumb/download endpoints.

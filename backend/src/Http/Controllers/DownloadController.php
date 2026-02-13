@@ -7,6 +7,7 @@ namespace WebAlbum\Http\Controllers;
 use WebAlbum\Db\Maria;
 use WebAlbum\Db\SqliteIndex;
 use WebAlbum\UserContext;
+use WebAlbum\Security\PathGuard;
 use ZipArchive;
 
 final class DownloadController
@@ -88,6 +89,7 @@ final class DownloadController
                 }
             }
 
+            $photosRoot = (string)($config["photos"]["root"] ?? "");
             $files = [];
             foreach ($rows as $row) {
                 $type = (string)($row["type"] ?? "");
@@ -100,6 +102,14 @@ final class DownloadController
                     $this->json(["error" => "File not found"], 400);
                     return;
                 }
+
+                try {
+                    $path = PathGuard::assertInsideRoot($path, $photosRoot);
+                } catch (\Throwable $e) {
+                    $this->json(["error" => "File outside configured photos root"], 400);
+                    return;
+                }
+
                 $files[] = [
                     "id" => (int)$row["id"],
                     "path" => $path,

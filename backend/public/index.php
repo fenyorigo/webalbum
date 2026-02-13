@@ -42,14 +42,18 @@ $method = $_SERVER["REQUEST_METHOD"] ?? "GET";
 $uri = $_SERVER["REQUEST_URI"] ?? "/";
 $path = parse_url($uri, PHP_URL_PATH) ?: "/";
 
+$forwardedProtoHeader = (string)($_SERVER["HTTP_X_FORWARDED_PROTO"] ?? "");
+$forwardedProto = strtolower(trim(explode(",", $forwardedProtoHeader)[0] ?? ""));
 $isSecure = (!empty($_SERVER["HTTPS"]) && $_SERVER["HTTPS"] !== "off")
-    || (($_SERVER["HTTP_X_FORWARDED_PROTO"] ?? "") === "https");
+    || ($forwardedProto === "https");
+$env = strtolower((string)(getenv("WEBALBUM_ENV") ?: getenv("APP_ENV") ?: "dev"));
+$forceSecure = $isSecure || in_array($env, ["prod", "production"], true);
 session_set_cookie_params([
     "lifetime" => 0,
     "path" => "/",
     "httponly" => true,
     "samesite" => "Lax",
-    "secure" => $isSecure,
+    "secure" => $forceSecure,
 ]);
 session_start();
 
