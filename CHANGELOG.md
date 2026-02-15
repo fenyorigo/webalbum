@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2 - 2026-02-15
+
+- Changed method of loading env variables.
+
 ## 1.1.1 - 2026-02-13
 
 - Enforce WA_PHOTOS_ROOT path containment in file/thumb/download endpoints; harden health endpoint; add login throttling and stricter session cookie handling.
