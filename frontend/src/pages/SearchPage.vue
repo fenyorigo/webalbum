@@ -147,7 +147,7 @@
       <div class="meta">
         <span v-if="loading">Loading…</span>
         <span v-else-if="total === null">Results: —</span>
-        <span v-else>Results: {{ results.length }} of {{ total }} ({{ total }} images)</span>
+        <span v-else>{{ resultsSummary }}</span>
         <span v-if="savedBanner" class="pill">{{ savedBanner }}</span>
       </div>
       <div class="view-toggle">
@@ -1217,6 +1217,20 @@ This is reversible from Admin -> Trash.`);
     viewMode() {}
   },
   computed: {
+    resultsSummary() {
+      if (this.total === null) {
+        return "Results: —";
+      }
+      const total = Number(this.total || 0);
+      if (total <= 0) {
+        return "Results: 0 of 0 (0 images)";
+      }
+      const perPage = Math.max(1, Number(this.form.limit || 50));
+      const currentPage = Math.max(1, Number(this.page || 1));
+      const start = ((currentPage - 1) * perPage) + 1;
+      const end = Math.min(currentPage * perPage, total);
+      return `Results: ${start}-${end} of ${total} (${total} images)`;
+    },
     totalPages() {
       if (this.total === null || this.total === 0) {
         return 1;
