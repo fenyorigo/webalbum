@@ -6,6 +6,8 @@ namespace WebAlbum\Http\Controllers;
 
 use WebAlbum\AuditLogMetaCache;
 use WebAlbum\Db\Maria;
+use WebAlbum\Db\SqliteIndex;
+use WebAlbum\Thumb\ThumbPolicy;
 use WebAlbum\UserContext;
 
 final class MaintenanceController
@@ -38,6 +40,85 @@ final class MaintenanceController
             ];
 
             $this->logAudit($maria, (int)$user['id'], 'maintenance_clean_structure', $report);
+            $this->json(['ok' => true, 'report' => $report]);
+        } catch (\Throwable $e) {
+            $this->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function purgePlaceholderThumbs(): void
+    {
+        try {
+            [$config, $maria, $user] = $this->authAdmin();
+            if ($user === null) {
+                return;
+            }
+
+            $raw = file_get_contents('php://input') ?: '{}';
+            $data = json_decode($raw, true);
+            if (!is_array($data)) {
+                $data = [];
+            }
+            $dryRun = (bool)($data['dry_run'] ?? false);
+            $limit = max(1, min(500000, (int)($data['limit'] ?? 200000)));
+
+            $thumbsRoot = $this->validateRoot((string)($config['thumbs']['root'] ?? ''));
+            $sqlitePath = (string)($config['sqlite']['path'] ?? '');
+            if ($sqlitePath === '') {
+                throw new \RuntimeException('SQLite path not configured');
+            }
+
+            $db = new SqliteIndex($sqlitePath);
+            $rows = $db->query(
+                "SELECT rel_path FROM files WHERE type = 'video' AND rel_path IS NOT NULL AND rel_path <> '' ORDER BY id ASC LIMIT ?",
+                [$limit]
+            );
+
+            $scanned = 0;
+            $deleted = 0;
+            $deletedBytes = 0;
+            $examples = [];
+
+            foreach ($rows as $row) {
+                $relPath = trim((string)($row['rel_path'] ?? ''));
+                if ($relPath === '') {
+                    continue;
+                }
+                $thumbPath = ThumbPolicy::thumbPath($thumbsRoot, $relPath);
+                if ($thumbPath === null || !is_file($thumbPath)) {
+                    continue;
+                }
+                $scanned++;
+                if (!ThumbPolicy::isLikelyPlaceholderThumb($thumbPath, 'video', $config)) {
+                    continue;
+                }
+
+                $size = (int)@filesize($thumbPath);
+                if (!$dryRun && @unlink($thumbPath)) {
+                    $deleted++;
+                    $deletedBytes += max(0, $size);
+                    if (count($examples) < 50) {
+                        $examples[] = str_replace(DIRECTORY_SEPARATOR, '/', $relPath);
+                    }
+                } elseif ($dryRun) {
+                    $deleted++;
+                    $deletedBytes += max(0, $size);
+                    if (count($examples) < 50) {
+                        $examples[] = str_replace(DIRECTORY_SEPARATOR, '/', $relPath);
+                    }
+                }
+            }
+
+            $report = [
+                'dry_run' => $dryRun,
+                'limit' => $limit,
+                'scanned_existing_video_thumbs' => $scanned,
+                'placeholder_matches' => $deleted,
+                'bytes' => $deletedBytes,
+                'examples' => $examples,
+            ];
+
+            $this->logAudit($maria, (int)$user['id'], 'maintenance_purge_placeholder_thumbs', $report);
             $this->json(['ok' => true, 'report' => $report]);
         } catch (\Throwable $e) {
             $this->json(['error' => $e->getMessage()], 500);

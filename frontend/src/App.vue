@@ -3,7 +3,7 @@
     <nav class="top">
       <div class="brand">
         Webalbum
-        <span class="version">v1.1.2</span>
+        <span class="version">v1.2.0</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>
@@ -19,7 +19,9 @@
             <button type="button" @click="openUserManagement">User management</button>
             <button type="button" @click="openLogs">View logs</button>
             <button type="button" @click="openTrash">Trash</button>
+            <button type="button" @click="openRequiredTools">Required tools</button>
             <button type="button" @click="runCleanStructure">Clean structure</button>
+            <button type="button" @click="runPurgePlaceholderThumbs">Purge placeholder thumbs</button>
             <button type="button" @click="recheckSystemTools">Recheck system tools</button>
             <button type="button" @click="reenableAllTags">Re-enable all tags</button>
           </div>
@@ -143,6 +145,51 @@
           <button class="inline" @click="closeDeleteUser" :disabled="loading">Cancel</button>
         </div>
         <p v-if="adminError" class="error">{{ adminError }}</p>
+      </div>
+    </div>
+
+    <div v-if="toolsOpen" class="modal-backdrop" @click.self="closeRequiredTools">
+      <div class="modal tools-modal">
+        <h3>Required tools</h3>
+        <table class="tags-table tools-table">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Status</th>
+              <th>Resolved path</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>exiftool</td>
+              <td>{{ toolAvailable("exiftool") ? "Found" : "Missing" }}</td>
+              <td>{{ toolResolvedPath("exiftool") }}</td>
+            </tr>
+            <tr>
+              <td>ffmpeg</td>
+              <td>{{ toolAvailable("ffmpeg") ? "Found" : "Missing" }}</td>
+              <td>{{ toolResolvedPath("ffmpeg") }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="!toolAvailable('exiftool')" class="tool-input">
+          <label>
+            exiftool full path
+            <input v-model.trim="toolForm.exiftool" type="text" placeholder="/usr/sbin/exiftool" />
+          </label>
+        </div>
+        <div v-if="!toolAvailable('ffmpeg')" class="tool-input">
+          <label>
+            ffmpeg full path
+            <input v-model.trim="toolForm.ffmpeg" type="text" placeholder="/usr/sbin/ffmpeg" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="inline" @click="saveRequiredTools" :disabled="loading || !hasToolPathInput">Save paths</button>
+          <button class="inline" @click="recheckSystemTools" :disabled="loading">Recheck</button>
+          <button class="inline" @click="closeRequiredTools" :disabled="loading">Close</button>
+        </div>
+        <p v-if="toolsError" class="error">{{ toolsError }}</p>
       </div>
     </div>
 
@@ -338,7 +385,13 @@ export default {
       logsError: "",
       detailsOpen: false,
       detailsRow: null,
-      toolStatus: null
+      toolStatus: null,
+      toolsOpen: false,
+      toolForm: {
+        exiftool: "",
+        ffmpeg: ""
+      },
+      toolsError: ""
     };
   },
   mounted() {
@@ -370,6 +423,18 @@ export default {
         warnings.push("Media tag editing disabled: exiftool not found on server");
       }
       return warnings;
+    },
+    hasToolPathInput() {
+      if (this.toolAvailable("exiftool") && this.toolAvailable("ffmpeg")) {
+        return false;
+      }
+      if (!this.toolAvailable("exiftool") && this.toolForm.exiftool) {
+        return true;
+      }
+      if (!this.toolAvailable("ffmpeg") && this.toolForm.ffmpeg) {
+        return true;
+      }
+      return false;
     }
   },
   methods: {
@@ -429,22 +494,91 @@ export default {
     },
     async loadToolStatus() {
       try {
-        const res = await fetch("/api/health");
+        const res = await fetch("/api/admin/tools/status");
+        if (res.status === 401 || res.status === 403) {
+          this.toolStatus = null;
+          return;
+        }
         if (!res.ok) {
           return;
         }
         const data = await res.json();
-        this.toolStatus = {
-          tools: data.tools || {},
-          checked_at: data.tools_checked_at || null
-        };
+        this.applyToolStatus(data);
       } catch (err) {
-        // ignore health errors
+        // ignore status errors
       }
     },
-    async recheckSystemTools() {
+    applyToolStatus(data) {
+      this.toolStatus = {
+        tools: data.tools || {},
+        checked_at: data.tools_checked_at || null,
+        overrides: data.overrides || {}
+      };
+    },
+    toolAvailable(name) {
+      const tools = this.toolStatus && this.toolStatus.tools ? this.toolStatus.tools : {};
+      return !!(tools[name] && tools[name].available === true);
+    },
+    toolResolvedPath(name) {
+      const tools = this.toolStatus && this.toolStatus.tools ? this.toolStatus.tools : {};
+      if (tools[name] && tools[name].path) {
+        return tools[name].path;
+      }
+      return "—";
+    },
+    async openRequiredTools() {
+      this.adminOpen = false;
+      this.toolsError = "";
+      this.toolForm = { exiftool: "", ffmpeg: "" };
+      await this.recheckSystemTools(true);
+      this.toolsOpen = true;
+    },
+    closeRequiredTools() {
+      this.toolsOpen = false;
+      this.toolsError = "";
+      this.toolForm = { exiftool: "", ffmpeg: "" };
+    },
+    async saveRequiredTools() {
+      if (!this.hasToolPathInput) {
+        return;
+      }
+      this.loading = true;
+      this.toolsError = "";
+      try {
+        const payload = {};
+        if (!this.toolAvailable("exiftool") && this.toolForm.exiftool) {
+          payload.exiftool = this.toolForm.exiftool;
+        }
+        if (!this.toolAvailable("ffmpeg") && this.toolForm.ffmpeg) {
+          payload.ffmpeg = this.toolForm.ffmpeg;
+        }
+        const res = await fetch("/api/admin/tools/configure", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (res.status === 401 || res.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          this.toolsError = data.error || "Saving tool paths failed";
+          return;
+        }
+        this.applyToolStatus(data);
+        this.toolForm = { exiftool: "", ffmpeg: "" };
+      } catch (err) {
+        this.toolsError = "Saving tool paths failed";
+      } finally {
+        this.loading = false;
+      }
+    },
+    async recheckSystemTools(silent = false) {
       this.adminOpen = false;
       this.loading = true;
+      this.toolsError = "";
       try {
         const res = await fetch("/api/admin/tools/recheck", { method: "POST" });
         if (res.status === 401 || res.status === 403) {
@@ -454,15 +588,18 @@ export default {
         }
         const data = await res.json();
         if (!res.ok) {
-          window.alert(data.error || "Tool recheck failed");
+          this.toolsError = data.error || "Tool recheck failed";
+          if (!silent && !this.toolsOpen) {
+            window.alert(this.toolsError);
+          }
           return;
         }
-        this.toolStatus = {
-          tools: data.tools || {},
-          checked_at: data.tools_checked_at || null
-        };
+        this.applyToolStatus(data);
       } catch (err) {
-        window.alert("Tool recheck failed");
+        this.toolsError = "Tool recheck failed";
+        if (!silent && !this.toolsOpen) {
+          window.alert("Tool recheck failed");
+        }
       } finally {
         this.loading = false;
       }
@@ -532,6 +669,82 @@ export default {
         window.alert(`Clean structure done\n${parts.join("\n")}`);
       } catch (err) {
         window.alert("Clean structure failed");
+      } finally {
+        this.loading = false;
+      }
+    },
+    async runPurgePlaceholderThumbs() {
+      this.adminOpen = false;
+      if (!window.confirm("Run dry-run placeholder thumb purge now?")) {
+        return;
+      }
+      this.loading = true;
+      try {
+        const parseResponse = async (res) => {
+          const raw = await res.text();
+          let data = {};
+          try {
+            data = raw ? JSON.parse(raw) : {};
+          } catch (err) {
+            data = {};
+          }
+          return { data, raw };
+        };
+
+        const dryRes = await fetch("/api/admin/maintenance/purge-placeholder-thumbs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dry_run: true, limit: 200000 })
+        });
+        if (dryRes.status === 401 || dryRes.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const dryParsed = await parseResponse(dryRes);
+        const dryData = dryParsed.data;
+        if (!dryRes.ok) {
+          window.alert(dryData.error || dryParsed.raw || "Placeholder purge dry-run failed");
+          return;
+        }
+
+        const dryReport = dryData.report || {};
+        const matches = Number(dryReport.placeholder_matches || 0);
+        const scanned = Number(dryReport.scanned_existing_video_thumbs || 0);
+        const bytes = Number(dryReport.bytes || 0);
+        const summary = `Dry-run complete\\nScanned: ${scanned}\\nPlaceholder matches: ${matches}\\nBytes: ${bytes}`;
+
+        if (matches <= 0) {
+          window.alert(summary);
+          return;
+        }
+
+        if (!window.confirm(`${summary}\\n\\nDelete these placeholder thumbs now?`)) {
+          return;
+        }
+
+        const realRes = await fetch("/api/admin/maintenance/purge-placeholder-thumbs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dry_run: false, limit: 200000 })
+        });
+        if (realRes.status === 401 || realRes.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const realParsed = await parseResponse(realRes);
+        const realData = realParsed.data;
+        if (!realRes.ok) {
+          window.alert(realData.error || realParsed.raw || "Placeholder purge failed");
+          return;
+        }
+        const realReport = realData.report || {};
+        window.alert(
+          `Placeholder purge complete\\nDeleted: ${Number(realReport.placeholder_matches || 0)}\\nBytes: ${Number(realReport.bytes || 0)}`
+        );
+      } catch (err) {
+        window.alert("Placeholder purge failed");
       } finally {
         this.loading = false;
       }
@@ -1154,6 +1367,22 @@ body {
   max-height: 85vh;
   overflow: auto;
 }
+.tools-modal {
+  width: min(760px, 94vw);
+}
+
+.tools-table {
+  margin-bottom: 12px;
+}
+
+.tool-input {
+  margin-bottom: 10px;
+}
+
+.tool-input label {
+  min-width: 100%;
+}
+
 
 .logs-toolbar {
   display: flex;

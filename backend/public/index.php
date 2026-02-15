@@ -69,6 +69,14 @@ if ($method === "GET" && $path === "/api/health") {
     (new HealthController($root . "/config/config.php"))->handle();
     exit;
 }
+if ($method === "GET" && $path === "/api/admin/tools/status") {
+    (new HealthController($root . "/config/config.php"))->adminToolStatus();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/tools/configure") {
+    (new HealthController($root . "/config/config.php"))->configureTools();
+    exit;
+}
 if ($method === "POST" && $path === "/api/admin/tools/recheck") {
     (new HealthController($root . "/config/config.php"))->recheckTools();
     exit;
@@ -168,6 +176,10 @@ if ($method === "POST" && $path === "/api/admin/trash/empty") {
 }
 if ($method === "POST" && $path === "/api/admin/maintenance/clean-structure") {
     (new MaintenanceController($root . "/config/config.php"))->cleanStructure();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/maintenance/purge-placeholder-thumbs") {
+    (new MaintenanceController($root . "/config/config.php"))->purgePlaceholderThumbs();
     exit;
 }
 if ($method === "GET" && $path === "/api/setup/status") {

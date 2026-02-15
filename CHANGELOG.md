@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0 - 2026-02-15
+
+- Robust video thumbnail generation
+- Fixed a race condition and cache poisoning issue where interrupted video thumbnail generation could permanently store placeholders. Thumbnail generation is now atomic, validated, retry-safe, and resilient to user navigation and session termination.
+
 ## 1.1.2 - 2026-02-15
 
 - Changed method of loading env variables.

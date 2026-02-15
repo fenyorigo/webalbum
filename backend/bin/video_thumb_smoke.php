@@ -100,11 +100,17 @@ function generateVideoThumb(string $src, string $dest, int $max, int $quality): 
     $filter = "scale=w=" . $max . ":h=" . $max . ":force_original_aspect_ratio=decrease," .
         "pad=" . $max . ":" . $max . ":(ow-iw)/2:(oh-ih)/2:color=white";
 
-    $ok = runFfmpegFrame($src, $dest, 3, $filter, $jpegQ);
-    if (!$ok) {
-        $ok = runFfmpegFrame($src, $dest, 1, $filter, $jpegQ);
+    $first = runFfmpegFrame($src, $dest, 3, $filter, $jpegQ);
+    if (!$first["ok"]) {
+        $second = runFfmpegFrame($src, $dest, 1, $filter, $jpegQ);
+        if (!$second["ok"]) {
+            $third = runFfmpegFrame($src, $dest, null, $filter, $jpegQ);
+            if (!$third["ok"]) {
+                throw new RuntimeException("ffmpeg thumbnail generation failed: " . substr((string)($third["stderr"] ?: $second["stderr"] ?: $first["stderr"]), 0, 220));
+            }
+        }
     }
-    if (!$ok || !is_file($dest) || filesize($dest) === 0) {
+    if (!is_file($dest) || filesize($dest) === 0) {
         throw new RuntimeException("ffmpeg thumbnail generation failed");
     }
 
@@ -117,31 +123,35 @@ function ffmpegJpegQ(int $quality): int
     return max(2, min(31, (int)round((100 - $quality) / 3)));
 }
 
-function runFfmpegFrame(string $src, string $dest, int $seekSec, string $filter, int $jpegQ): bool
+function runFfmpegFrame(string $src, string $dest, ?int $seekSec, string $filter, int $jpegQ): array
 {
-    $cmd = "ffmpeg -v error -y " .
-        "-ss " . (int)$seekSec . " " .
+    $seekArg = $seekSec !== null ? ("-ss " . (int)$seekSec . " ") : "";
+    $cmd = "ffmpeg -v warning -y " .
+        $seekArg .
         "-i " . escapeshellarg($src) . " " .
+        "-an " .
         "-frames:v 1 " .
         "-vf " . escapeshellarg($filter) . " " .
-        "-f image2 -vcodec mjpeg " .
+        "-f image2 -update 1 -vcodec mjpeg " .
         "-q:v " . (int)$jpegQ . " " .
         escapeshellarg($dest);
 
     $descriptors = [1 => ["pipe", "w"], 2 => ["pipe", "w"]];
     $proc = proc_open($cmd, $descriptors, $pipes);
     if (!is_resource($proc)) {
-        return false;
+        return ["ok" => false, "stderr" => "proc_open failed", "exit_code" => -1];
     }
+    $stderr = "";
     if (isset($pipes[1]) && is_resource($pipes[1])) {
         stream_get_contents($pipes[1]);
         fclose($pipes[1]);
     }
     if (isset($pipes[2]) && is_resource($pipes[2])) {
-        stream_get_contents($pipes[2]);
+        $stderr = (string)stream_get_contents($pipes[2]);
         fclose($pipes[2]);
     }
-    return proc_close($proc) === 0;
+    $code = proc_close($proc);
+    return ["ok" => $code === 0, "stderr" => $stderr, "exit_code" => $code];
 }
 
 function overlayPlayIcon(string $jpegPath, int $quality): void
