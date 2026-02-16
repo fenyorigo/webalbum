@@ -3,7 +3,7 @@
     <header class="hero">
       <h1 v-if="!setupRequired">Login</h1>
       <h1 v-else>Create admin user</h1>
-      <p v-if="!setupRequired">Sign in to access Webalbum.</p>
+      <p v-if="!setupRequired">Sign in to access Family memories.</p>
       <p v-else>Set up the initial admin account.</p>
     </header>
 

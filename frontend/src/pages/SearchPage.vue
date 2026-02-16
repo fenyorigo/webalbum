@@ -10,7 +10,7 @@
       </aside>
       <div class="search-main">
     <header class="hero">
-      <h1>Webalbum</h1>
+      <h1>Family memories</h1>
       <p>Query your indexer DB (read-only).</p>
     </header>
 
@@ -109,8 +109,27 @@
           Type
           <select v-model="form.type">
             <option value="">Any</option>
-            <option value="image">Image</option>
-            <option value="video">Video</option>
+            <option value="image">Photos</option>
+            <option value="video">Videos</option>
+            <option value="audio">Audio</option>
+            <option value="doc">Documents</option>
+          </select>
+        </label>
+        <label>
+          Extension
+          <select v-model="form.ext">
+            <option value="">Any</option>
+            <option value="pdf">PDF</option>
+            <option value="txt">TXT</option>
+            <option value="doc">DOC</option>
+            <option value="docx">DOCX</option>
+            <option value="xls">XLS</option>
+            <option value="xlsx">XLSX</option>
+            <option value="ppt">PPT</option>
+            <option value="pptx">PPTX</option>
+            <option value="mp3">MP3</option>
+            <option value="m4a">M4A</option>
+            <option value="flac">FLAC</option>
           </select>
         </label>
         <label>
@@ -185,7 +204,7 @@
         >
           Download selected ({{ selectedIds.length }})
         </button>
-        <span class="note">Max 20 images per ZIP</span>
+        <span class="note">Max 20 files per ZIP</span>
         <button
           v-if="selectedIds.length"
           class="clear"
@@ -238,7 +257,7 @@
         >
           Download selected ({{ selectedIds.length }})
         </button>
-        <span class="note">Max 20 images per ZIP</span>
+        <span class="note">Max 20 files per ZIP</span>
         <button
           v-if="selectedIds.length"
           class="clear"
@@ -267,7 +286,7 @@
         >
           Download selected ({{ selectedIds.length }})
         </button>
-        <span class="note">Max 20 images per ZIP</span>
+        <span class="note">Max 20 files per ZIP</span>
       </div>
       <pre v-if="debugInfo" class="debug">{{ debugInfo }}</pre>
     </section>
@@ -291,6 +310,25 @@
       @close="closeVideoViewer"
       @trashed="onItemTrashed"
     />
+    <div v-if="assetViewerOpen" class="modal-backdrop" @click.self="closeAssetViewer">
+      <div class="modal asset-modal">
+        <div class="modal-header">
+          <h3>{{ assetViewerRow && fileName(assetViewerRow.path) }}</h3>
+          <button class="inline" type="button" @click="closeAssetViewer">Close</button>
+        </div>
+        <p class="muted" :title="assetViewerRow && assetViewerRow.path">{{ assetViewerRow && assetViewerRow.path }}</p>
+        <div v-if="assetViewerRow && assetViewerRow.type === 'audio'" class="asset-body">
+          <audio controls :src="assetFileUrl(assetViewerRow)"></audio>
+        </div>
+        <div v-else class="asset-body doc-body">
+          <iframe :src="assetViewUrl(assetViewerRow)" title="Document preview"></iframe>
+        </div>
+        <div class="modal-actions">
+          <button class="inline" type="button" @click="openAssetOriginal">Download original</button>
+        </div>
+        <p v-if="assetViewerError" class="error">{{ assetViewerError }}</p>
+      </div>
+    </div>
     <div v-if="saveOpen" class="modal-backdrop" @click.self="closeSaveModal">
       <div class="modal">
         <h3>Save search</h3>
@@ -347,7 +385,8 @@ export default {
         date: "",
         start: "",
         end: "",
-        type: "image",
+        type: "",
+        ext: "",
         onlyFavorites: false,
         sortField: "path",
         sortDir: "asc",
@@ -376,7 +415,10 @@ export default {
       loadedSearchName: "",
       loadedQuery: null,
       loadedSnapshot: "",
-      selectedFolder: null
+      selectedFolder: null,
+      assetViewerOpen: false,
+      assetViewerRow: null,
+      assetViewerError: ""
     };
   },
   mounted() {
@@ -513,6 +555,7 @@ export default {
         .map((item) => item.value);
       const pathItem = items.find((item) => item && item.field === "path");
       const typeItem = items.find((item) => item && item.field === "type" && item.op === "is");
+      const extItem = items.find((item) => item && item.field === "ext" && item.op === "is");
       const takenItem = items.find((item) => item && item.field === "taken");
 
       const folderRelPath = typeof where.folder_rel_path === "string" ? where.folder_rel_path.trim() : "";
@@ -527,6 +570,7 @@ export default {
         start: "",
         end: "",
         type: typeItem && typeof typeItem.value === "string" ? typeItem.value : "",
+        ext: extItem && typeof extItem.value === "string" ? extItem.value : "",
         onlyFavorites: !!where.only_favorites,
         sortField: "path",
         sortDir: "asc",
@@ -598,6 +642,9 @@ export default {
       }
       if (this.form.type) {
         items.push({ field: "type", op: "is", value: this.form.type });
+      }
+      if (this.form.ext) {
+        items.push({ field: "ext", op: "is", value: this.form.ext });
       }
 
       const where = {
@@ -715,6 +762,9 @@ export default {
       }
       if (this.form.type) {
         parts.push(`type ${this.form.type}`);
+      }
+      if (this.form.ext) {
+        parts.push(`ext ${this.form.ext}`);
       }
       if (this.form.path) {
         parts.push(`path ${this.form.path}`);
@@ -914,6 +964,7 @@ export default {
         this.selectedIds = [];
         this.viewerOpen = false;
         this.videoViewerOpen = false;
+        this.assetViewerOpen = false;
         if (!this.canFavorite) {
           this.form.onlyFavorites = false;
         }
@@ -954,10 +1005,32 @@ export default {
     fileUrl(id) {
       return `${window.location.origin}/api/file?id=${id}`;
     },
+    assetFileUrl(row) {
+      if (!row || !row.asset_id) {
+        return "";
+      }
+      return `${window.location.origin}/api/asset/file?id=${row.asset_id}`;
+    },
+    assetViewUrl(row) {
+      if (!row || !row.asset_id) {
+        return "";
+      }
+      return `${window.location.origin}/api/asset/view?id=${row.asset_id}`;
+    },
     videoUrl(id) {
       return `${window.location.origin}/api/video?id=${id}`;
     },
-    thumbUrl(id) {
+    thumbUrl(rowOrId) {
+      const row = typeof rowOrId === "object" && rowOrId !== null
+        ? rowOrId
+        : this.results.find((r) => r.id === rowOrId);
+      if (row && row.entity === "asset") {
+        if (row.type === "doc") {
+          return `${window.location.origin}/api/asset/thumb?id=${row.asset_id}`;
+        }
+        return "";
+      }
+      const id = typeof rowOrId === "object" && rowOrId !== null ? rowOrId.id : rowOrId;
       return `${window.location.origin}/api/thumb?id=${id}`;
     },
     fileName(path) {
@@ -967,8 +1040,11 @@ export default {
       const parts = path.split("/");
       return parts[parts.length - 1];
     },
-    async copyLink(id) {
-      const text = this.fileUrl(id);
+    async copyLink(rowOrId) {
+      const row = typeof rowOrId === "object" && rowOrId !== null
+        ? rowOrId
+        : this.results.find((r) => r.id === rowOrId);
+      const text = row && row.entity === "asset" ? this.assetFileUrl(row) : this.fileUrl(rowOrId);
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(text);
@@ -987,11 +1063,11 @@ export default {
     },
     async downloadSelected() {
       if (this.selectedIds.length === 0) {
-        this.showToast("Please select images first (max 20)");
+        this.showToast("Please select files first (max 20)");
         return;
       }
       if (this.selectedIds.length > 20) {
-        this.showToast("More than 20 images selected, please unselect some");
+        this.showToast("More than 20 files selected, please unselect some");
         return;
       }
       try {
@@ -1115,7 +1191,8 @@ This is reversible from Admin -> Trash.`);
         date: "",
         start: "",
         end: "",
-        type: "image",
+        type: "",
+        ext: "",
         onlyFavorites: false,
         sortField: "path",
         sortDir: "asc",
@@ -1141,7 +1218,17 @@ This is reversible from Admin -> Trash.`);
       if (!row) {
         return;
       }
+      if (row.entity === "asset") {
+        this.viewerOpen = false;
+        this.videoViewerOpen = false;
+        this.assetViewerOpen = false;
+        this.assetViewerRow = row;
+        this.assetViewerError = "";
+        this.assetViewerOpen = true;
+        return;
+      }
       if (row.type === "video") {
+        this.assetViewerOpen = false;
         this.viewerOpen = false;
         this.videoViewerStartId = id;
         this.videoViewerOpen = true;
@@ -1151,6 +1238,7 @@ This is reversible from Admin -> Trash.`);
         this.showToast("Preview not supported for this file type");
         return;
       }
+      this.assetViewerOpen = false;
       this.videoViewerOpen = false;
       this.viewerStartId = id;
       this.viewerOpen = true;
@@ -1161,9 +1249,25 @@ This is reversible from Admin -> Trash.`);
     closeVideoViewer() {
       this.videoViewerOpen = false;
     },
+    closeAssetViewer() {
+      this.assetViewerOpen = false;
+      this.assetViewerRow = null;
+      this.assetViewerError = "";
+    },
+    openAssetOriginal() {
+      if (!this.assetViewerRow) {
+        return;
+      }
+      const url = this.assetFileUrl(this.assetViewerRow);
+      if (!url) {
+        return;
+      }
+      window.open(url, "_blank", "noopener");
+    },
     async onItemTrashed() {
       this.viewerOpen = false;
       this.videoViewerOpen = false;
+      this.assetViewerOpen = false;
       this.showToast("Moved to Trash");
       this.selectedIds = [];
       await this.runSearch();
@@ -1185,6 +1289,20 @@ This is reversible from Admin -> Trash.`);
     },
     "$route.query.load"() {
       this.applyLoadFromRoute();
+    },
+    "form.type"() {
+      if (this.suspendAuto) {
+        return;
+      }
+      this.page = 1;
+      this.runSearch();
+    },
+    "form.ext"() {
+      if (this.suspendAuto) {
+        return;
+      }
+      this.page = 1;
+      this.runSearch();
     },
     "form.sortField"() {
       if (this.suspendAuto) {
@@ -1223,13 +1341,13 @@ This is reversible from Admin -> Trash.`);
       }
       const total = Number(this.total || 0);
       if (total <= 0) {
-        return "Results: 0 of 0 (0 images)";
+        return "Results: 0 of 0 (0 items)";
       }
       const perPage = Math.max(1, Number(this.form.limit || 50));
       const currentPage = Math.max(1, Number(this.page || 1));
       const start = ((currentPage - 1) * perPage) + 1;
       const end = Math.min(currentPage * perPage, total);
-      return `Results: ${start}-${end} of ${total} (${total} images)`;
+      return `Results: ${start}-${end} of ${total} (${total} items)`;
     },
     totalPages() {
       if (this.total === null || this.total === 0) {
@@ -1282,5 +1400,34 @@ This is reversible from Admin -> Trash.`);
   .folders-sidebar {
     position: static;
   }
+}
+</style>
+
+<style scoped>
+.asset-modal {
+  width: 80vw;
+  max-width: 80vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.asset-body {
+  margin-top: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.asset-body audio {
+  width: 100%;
+}
+
+.doc-body iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 60vh;
+  border: 1px solid #d6c9b5;
+  border-radius: 8px;
+  background: #fff;
 }
 </style>

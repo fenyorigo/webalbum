@@ -13,7 +13,7 @@
     <div v-else class="tree-list">
       <div
         v-for="row in rows"
-        :key="row.id"
+        :key="row.key || row.rel_path"
         class="tree-row"
         :class="{ active: selectedRelPath === row.rel_path }"
         :style="{ paddingLeft: `${Math.max(0, (row.depth - 1) * 14 + 8)}px` }"
@@ -23,9 +23,9 @@
           type="button"
           :disabled="!row.has_children"
           @click="toggle(row)"
-          :aria-label="expanded[row.id] ? 'Collapse folder' : 'Expand folder'"
+          :aria-label="expanded[row.key || row.rel_path] ? 'Collapse folder' : 'Expand folder'"
         >
-          <span v-if="row.has_children">{{ expanded[row.id] ? '▾' : '▸' }}</span>
+          <span v-if="row.has_children">{{ expanded[row.key || row.rel_path] ? '▾' : '▸' }}</span>
         </button>
         <button class="name" type="button" :title="row.rel_path" @click="selectRow(row)">
           {{ row.name }}
@@ -56,8 +56,9 @@ export default {
       const visit = (nodes) => {
         nodes.forEach((node) => {
           out.push(node);
-          if (this.expanded[node.id]) {
-            visit(this.childrenByParent[node.id] || []);
+          const nodeKey = node.key || node.rel_path;
+          if (this.expanded[nodeKey]) {
+            visit(this.childrenByParent[nodeKey] || []);
           }
         });
       };
@@ -86,11 +87,11 @@ export default {
         this.loading = false;
       }
     },
-    async loadChildren(parentId) {
-      if (this.childrenByParent[parentId]) {
+    async loadChildren(parentRelPath) {
+      if (this.childrenByParent[parentRelPath]) {
         return;
       }
-      const qs = new URLSearchParams({ parent_id: String(parentId) });
+      const qs = new URLSearchParams({ parent_rel_path: String(parentRelPath) });
       const res = await fetch(`/api/tree?${qs.toString()}`);
       const data = await res.json();
       if (!res.ok) {
@@ -98,20 +99,21 @@ export default {
       }
       this.childrenByParent = {
         ...this.childrenByParent,
-        [parentId]: Array.isArray(data) ? data : []
+        [parentRelPath]: Array.isArray(data) ? data : []
       };
     },
     async toggle(row) {
       if (!row.has_children) {
         return;
       }
-      if (this.expanded[row.id]) {
-        this.expanded = { ...this.expanded, [row.id]: false };
+      const nodeKey = row.key || row.rel_path;
+      if (this.expanded[nodeKey]) {
+        this.expanded = { ...this.expanded, [nodeKey]: false };
         return;
       }
       try {
-        await this.loadChildren(row.id);
-        this.expanded = { ...this.expanded, [row.id]: true };
+        await this.loadChildren(row.rel_path);
+        this.expanded = { ...this.expanded, [nodeKey]: true };
       } catch (err) {
         this.error = err.message || "Failed to load child folders";
       }

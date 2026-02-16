@@ -2,25 +2,25 @@
   <div class="results-grid" v-if="items.length">
     <div
       v-for="(row, idx) in items"
-      :key="row.id"
+      :key="`${row.entity || 'media'}:${row.id}`"
       class="grid-item"
       tabindex="0"
-      @keydown.space.prevent="toggleSelected(row.id)"
+      @keydown.space.prevent="toggleSelected(row.id, row)"
     >
       <div class="grid-thumb">
         <button class="link" type="button" @click="$emit('open', row.id)">
           <img
-            v-if="row.type === 'image' || row.type === 'video'"
-            :src="thumbUrl(row.id)"
+            v-if="row.type === 'image' || row.type === 'video' || row.type === 'doc'"
+            :src="thumbUrl(row)"
             :alt="fileName(row.path)"
             loading="lazy"
             class="thumb-img"
             @load="markLoaded"
           />
-          <span v-else class="thumb-placeholder">▶</span>
+          <span v-else class="thumb-placeholder">🎵</span>
         </button>
         <button
-          v-if="canFavorite"
+          v-if="canFavorite && row.entity !== 'asset'"
           class="grid-star"
           type="button"
           :aria-label="row.is_favorite ? 'Unstar' : 'Star'"
@@ -34,7 +34,7 @@
             :value="row.id"
             :checked="selectedIds.includes(row.id)"
             @click.stop
-            @change="toggleSelected(row.id)"
+            @change="toggleSelected(row.id, row)"
           />
         </label>
         <span class="grid-num">{{ offset + idx + 1 }}</span>
@@ -47,7 +47,7 @@
       </div>
       <div class="grid-actions">
         <button
-          v-if="canTrash"
+          v-if="canTrash && row.entity !== 'asset'"
           class="trash"
           type="button"
           aria-label="Move to Trash"
@@ -56,7 +56,7 @@
           🗑
         </button>
         <span v-else></span>
-        <button class="copy" type="button" @click="copyLink(row.id)">Copy</button>
+        <button class="copy" type="button" @click="copyLink(row)">Copy</button>
       </div>
     </div>
   </div>

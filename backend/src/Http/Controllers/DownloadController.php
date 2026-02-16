@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WebAlbum\Http\Controllers;
 
+use WebAlbum\Assets\AssetPaths;
 use WebAlbum\Db\Maria;
 use WebAlbum\Db\SqliteIndex;
 use WebAlbum\UserContext;
@@ -58,63 +59,119 @@ final class DownloadController
                 $this->json(["error" => "Not authenticated"], 401);
                 return;
             }
+            $photosRoot = (string)($config["photos"]["root"] ?? "");
             $db = new SqliteIndex($config["sqlite"]["path"]);
 
-            $placeholders = implode(",", array_fill(0, count($idList), "?"));
-            $rows = $db->query(
-                "SELECT id, path, rel_path, type FROM files WHERE id IN (" . $placeholders . ")",
-                $idList
-            );
-            if (count($rows) !== count($idList)) {
-                $this->json(["error" => "Some files were not found"], 400);
-                return;
-            }
-
-            $relPaths = [];
-            foreach ($rows as $row) {
-                $rel = trim((string)($row["rel_path"] ?? ""));
-                if ($rel !== "") {
-                    $relPaths[$rel] = true;
-                }
-            }
-            if ($relPaths !== []) {
-                $trashRows = $maria->query(
-                    "SELECT rel_path FROM wa_media_trash WHERE status = 'trashed' AND rel_path IN (" .
-                    implode(",", array_fill(0, count($relPaths), "?")) . ")",
-                    array_keys($relPaths)
-                );
-                if ($trashRows !== []) {
-                    $this->json(["error" => "Trashed media cannot be downloaded"], 400);
-                    return;
+            $mediaIds = [];
+            $assetIds = [];
+            foreach ($idList as $id) {
+                if ($id > 0) {
+                    $mediaIds[] = $id;
+                } elseif ($id < 0) {
+                    $assetIds[] = abs($id);
                 }
             }
 
-            $photosRoot = (string)($config["photos"]["root"] ?? "");
             $files = [];
-            foreach ($rows as $row) {
-                $type = (string)($row["type"] ?? "");
-                if ($type !== "image" && $type !== "video") {
-                    $this->json(["error" => "Only image and video files are supported"], 400);
-                    return;
-                }
-                $path = $row["path"] ?? "";
-                if (!is_string($path) || !is_file($path)) {
-                    $this->json(["error" => "File not found"], 400);
+
+            if ($mediaIds !== []) {
+                $placeholders = implode(",", array_fill(0, count($mediaIds), "?"));
+                $rows = $db->query(
+                    "SELECT id, path, rel_path, type FROM files WHERE id IN (" . $placeholders . ")",
+                    $mediaIds
+                );
+                if (count($rows) !== count($mediaIds)) {
+                    $this->json(["error" => "Some selected media files were not found"], 400);
                     return;
                 }
 
-                try {
-                    $path = PathGuard::assertInsideRoot($path, $photosRoot);
-                } catch (\Throwable $e) {
-                    $this->json(["error" => "File outside configured photos root"], 400);
+                $relPaths = [];
+                foreach ($rows as $row) {
+                    $rel = trim((string)($row["rel_path"] ?? ""));
+                    if ($rel !== "") {
+                        $relPaths[$rel] = true;
+                    }
+                }
+                if ($relPaths !== []) {
+                    $trashRows = $maria->query(
+                        "SELECT rel_path FROM wa_media_trash WHERE status = 'trashed' AND rel_path IN (" .
+                        implode(",", array_fill(0, count($relPaths), "?")) . ")",
+                        array_keys($relPaths)
+                    );
+                    if ($trashRows !== []) {
+                        $this->json(["error" => "Trashed media cannot be downloaded"], 400);
+                        return;
+                    }
+                }
+
+                foreach ($rows as $row) {
+                    $type = (string)($row["type"] ?? "");
+                    if ($type !== "image" && $type !== "video") {
+                        $this->json(["error" => "Only image/video media files are supported"], 400);
+                        return;
+                    }
+                    $path = $row["path"] ?? "";
+                    if (!is_string($path) || !is_file($path)) {
+                        $this->json(["error" => "File not found"], 400);
+                        return;
+                    }
+
+                    try {
+                        $path = PathGuard::assertInsideRoot($path, $photosRoot);
+                    } catch (\Throwable $e) {
+                        $this->json(["error" => "File outside configured photos root"], 400);
+                        return;
+                    }
+
+                    $files[] = [
+                        "id" => (int)$row["id"],
+                        "path" => $path,
+                        "type" => $type,
+                    ];
+                }
+            }
+
+            if ($assetIds !== []) {
+                $placeholders = implode(",", array_fill(0, count($assetIds), "?"));
+                $rows = $maria->query(
+                    "SELECT id, rel_path, type FROM wa_assets WHERE id IN (" . $placeholders . ")",
+                    $assetIds
+                );
+                if (count($rows) !== count($assetIds)) {
+                    $this->json(["error" => "Some selected assets were not found"], 400);
                     return;
                 }
 
-                $files[] = [
-                    "id" => (int)$row["id"],
-                    "path" => $path,
-                    "type" => $type,
-                ];
+                foreach ($rows as $row) {
+                    $type = (string)($row["type"] ?? "");
+                    if ($type !== "audio" && $type !== "doc") {
+                        $this->json(["error" => "Only audio/document assets are supported"], 400);
+                        return;
+                    }
+                    $relPath = (string)($row["rel_path"] ?? "");
+                    $path = AssetPaths::joinInside($photosRoot, $relPath);
+                    if ($path === null || !is_file($path)) {
+                        $this->json(["error" => "Asset file not found"], 400);
+                        return;
+                    }
+                    try {
+                        $path = PathGuard::assertInsideRoot($path, $photosRoot);
+                    } catch (\Throwable $e) {
+                        $this->json(["error" => "Asset outside configured photos root"], 400);
+                        return;
+                    }
+
+                    $files[] = [
+                        "id" => -((int)$row["id"]),
+                        "path" => $path,
+                        "type" => $type,
+                    ];
+                }
+            }
+
+            if ($files === []) {
+                $this->json(["error" => "No files selected"], 400);
+                return;
             }
 
             $tmp = tempnam(sys_get_temp_dir(), "webalbum_zip_");

@@ -6,6 +6,7 @@ namespace WebAlbum\Http\Controllers;
 
 use WebAlbum\Db\Maria;
 use WebAlbum\AuditLogMetaCache;
+use WebAlbum\SystemTools;
 use WebAlbum\UserContext;
 
 final class AuthController
@@ -58,6 +59,14 @@ final class AuthController
             session_regenerate_id(true);
             $_SESSION["wa_user_id"] = (int)$user["id"];
             $mustChange = (int)($user["force_password_change"] ?? 0) === 1;
+            if ((int)($user["is_admin"] ?? 0) === 1) {
+                try {
+                    $config = require $this->configPath;
+                    SystemTools::checkExternalTools($config, true);
+                } catch (\Throwable $toolErr) {
+                    // non-blocking
+                }
+            }
             $this->logAudit($db, (int)$user["id"], (int)$user["id"], "login", "ui");
             $this->json([
                 "user" => [

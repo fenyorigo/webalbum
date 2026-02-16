@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+## 1.4.0 - 2026-02-16
+
+- Completed assets handling (video, documents) with Admin Assets workflow.
+- Added documents/audio asset indexing, async derivative jobs, and worker processing.
+- Added admin scan/status UX with pending/running/ready/no-processing/failed split and clear-list cleanup.
+- Added queue split by job type (`doc_thumb` vs `doc_pdf_preview`) in admin status views.
+- Added support for `ppt` and `pptx` document conversion/preview/thumbnail flow.
+- Merged doc/audio folders into the sidebar folder tree for browsing/search.
+
+## 1.3.0 - 2026-02-16
+
+- Renamed UI branding from "Webalbum" to "Family memories" (login + main header/title).
+- Improved Admin Assets page with automatic refresh and sortable Thumb/Preview status columns.
+- Improved asset status display in Admin Assets (audio rows shown as N/A instead of pending).
+- Enabled selecting and downloading audio/document assets from search results (still max 20 files per ZIP).
+
 ## 1.2.0 - 2026-02-15
 
 - Robust video thumbnail generation

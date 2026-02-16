@@ -25,15 +25,16 @@ final class TreeController
                 return;
             }
 
-            $rows = $sqlite->query(
-                "SELECT d.id, d.parent_id, d.rel_path, d.depth, " .
-                "EXISTS(SELECT 1 FROM directories c WHERE c.parent_id = d.id LIMIT 1) AS has_children " .
-                "FROM directories d " .
-                "WHERE d.depth = 1 " .
-                "ORDER BY d.rel_path ASC"
-            );
-
-            $this->json(array_map(fn (array $row): array => $this->mapNode($row), $rows));
+            [$folders, $idsByRel] = $this->folderUniverse($sqlite, $maria);
+            $roots = [];
+            foreach ($folders as $relRaw) {
+                $rel = (string)$relRaw;
+                if (strpos($rel, '/') === false) {
+                    $roots[] = $this->mapNodeFromRel($rel, null, $folders, $idsByRel);
+                }
+            }
+            usort($roots, fn (array $a, array $b): int => strcasecmp((string)$a['rel_path'], (string)$b['rel_path']));
+            $this->json($roots);
         } catch (\Throwable $e) {
             $this->json(["error" => $e->getMessage()], 400);
         }
@@ -47,37 +48,48 @@ final class TreeController
                 return;
             }
 
-            $parentId = isset($_GET['parent_id']) ? (int)$_GET['parent_id'] : 0;
-            if ($parentId < 1) {
-                $this->json(["error" => "parent_id must be a positive integer"], 400);
+            [$folders, $idsByRel, $relById] = $this->folderUniverse($sqlite, $maria, true);
+            $parentRel = trim(str_replace('\\', '/', (string)($_GET['parent_rel_path'] ?? '')), '/');
+            if ($parentRel === '') {
+                $parentId = isset($_GET['parent_id']) ? (int)$_GET['parent_id'] : 0;
+                if ($parentId > 0 && isset($relById[$parentId])) {
+                    $parentRel = $relById[$parentId];
+                }
+            }
+            if ($parentRel === '') {
+                $this->json(["error" => "parent_rel_path (or a known parent_id) is required"], 400);
                 return;
             }
 
-            $rows = $sqlite->query(
-                "SELECT d.id, d.parent_id, d.rel_path, d.depth, " .
-                "EXISTS(SELECT 1 FROM directories c WHERE c.parent_id = d.id LIMIT 1) AS has_children " .
-                "FROM directories d " .
-                "WHERE d.parent_id = ? " .
-                "ORDER BY d.rel_path ASC",
-                [$parentId]
-            );
-
-            $this->json(array_map(fn (array $row): array => $this->mapNode($row), $rows));
+            $children = $this->childRelPaths($parentRel, $folders);
+            $rows = [];
+            foreach ($children as $relRaw) {
+                $rel = (string)$relRaw;
+                $rows[] = $this->mapNodeFromRel($rel, $parentRel, $folders, $idsByRel);
+            }
+            usort($rows, fn (array $a, array $b): int => strcasecmp((string)$a['rel_path'], (string)$b['rel_path']));
+            $this->json($rows);
         } catch (\Throwable $e) {
             $this->json(["error" => $e->getMessage()], 400);
         }
     }
 
-    private function mapNode(array $row): array
+    private function mapNodeFromRel(string $relPath, ?string $parentRel, array $folders, array $idsByRel): array
     {
-        $relPath = (string)($row['rel_path'] ?? '');
+        $id = $idsByRel[$relPath] ?? null;
+        $parentId = null;
+        if ($parentRel !== null && $parentRel !== '') {
+            $parentId = $idsByRel[$parentRel] ?? null;
+        }
+
         return [
-            'id' => (int)$row['id'],
-            'parent_id' => $row['parent_id'] !== null ? (int)$row['parent_id'] : null,
+            'id' => $id !== null ? (int)$id : null,
+            'key' => $relPath,
+            'parent_id' => $parentId !== null ? (int)$parentId : null,
             'name' => $this->nameFromRelPath($relPath),
             'rel_path' => $relPath,
-            'depth' => (int)($row['depth'] ?? 0),
-            'has_children' => ((int)($row['has_children'] ?? 0)) === 1,
+            'depth' => $this->depthFromRelPath($relPath),
+            'has_children' => $this->hasChildren($relPath, $folders),
         ];
     }
 
@@ -118,5 +130,88 @@ final class TreeController
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($payload);
+    }
+
+    private function folderUniverse(SqliteIndex $sqlite, Maria $maria, bool $withReverse = false): array
+    {
+        $folderSet = [];
+        $idsByRel = [];
+        $relById = [];
+
+        $dirRows = $sqlite->query('SELECT id, rel_path FROM directories');
+        foreach ($dirRows as $row) {
+            $rel = trim(str_replace('\\', '/', (string)($row['rel_path'] ?? '')), '/');
+            if ($rel === '') {
+                continue;
+            }
+            $folderSet[$rel] = true;
+            $id = (int)($row['id'] ?? 0);
+            if ($id > 0) {
+                $idsByRel[$rel] = $id;
+                $relById[$id] = $rel;
+            }
+        }
+
+        $assetRows = $maria->query('SELECT rel_path FROM wa_assets');
+        foreach ($assetRows as $row) {
+            $relPath = trim(str_replace('\\', '/', (string)($row['rel_path'] ?? '')), '/');
+            if ($relPath === '') {
+                continue;
+            }
+            $parts = explode('/', $relPath);
+            array_pop($parts);
+            $prefix = '';
+            foreach ($parts as $part) {
+                if ($part === '') {
+                    continue;
+                }
+                $prefix = $prefix === '' ? $part : ($prefix . '/' . $part);
+                $folderSet[$prefix] = true;
+            }
+        }
+
+        if ($withReverse) {
+            return [array_keys($folderSet), $idsByRel, $relById];
+        }
+        return [array_keys($folderSet), $idsByRel];
+    }
+
+    private function childRelPaths(string $parentRel, array $folders): array
+    {
+        $prefix = rtrim($parentRel, '/') . '/';
+        $children = [];
+        foreach ($folders as $relRaw) {
+            $rel = (string)$relRaw;
+            if (!str_starts_with($rel, $prefix)) {
+                continue;
+            }
+            $rest = substr($rel, strlen($prefix));
+            if ($rest === '' || strpos($rest, '/') !== false) {
+                continue;
+            }
+            $children[$rel] = true;
+        }
+        return array_keys($children);
+    }
+
+    private function hasChildren(string $relPath, array $folders): bool
+    {
+        $prefix = rtrim($relPath, '/') . '/';
+        foreach ($folders as $relRaw) {
+            $rel = (string)$relRaw;
+            if (str_starts_with($rel, $prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function depthFromRelPath(string $relPath): int
+    {
+        $trimmed = trim(str_replace('\\', '/', $relPath), '/');
+        if ($trimmed === '') {
+            return 0;
+        }
+        return count(explode('/', $trimmed));
     }
 }

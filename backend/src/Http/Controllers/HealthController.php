@@ -11,7 +11,7 @@ use WebAlbum\UserContext;
 
 final class HealthController
 {
-    private const VERSION = "webalbum 1.2.0";
+    private const VERSION = "webalbum 1.4.0";
 
     private string $configPath;
 
@@ -95,7 +95,7 @@ final class HealthController
             }
 
             $updates = [];
-            foreach (["exiftool", "ffmpeg", "ffprobe"] as $tool) {
+            foreach (["exiftool", "ffmpeg", "ffprobe", "soffice", "gs"] as $tool) {
                 if (!array_key_exists($tool, $payload)) {
                     continue;
                 }

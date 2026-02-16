@@ -197,7 +197,8 @@ export default {
     videoUrl(id) {
       return `${window.location.origin}/api/video?id=${id}`;
     },
-    thumbUrl(id) {
+    thumbUrl(rowOrId) {
+      const id = typeof rowOrId === "object" && rowOrId !== null ? rowOrId.id : rowOrId;
       return `${window.location.origin}/api/thumb?id=${id}`;
     },
     formatTs(ts) {
@@ -208,7 +209,8 @@ export default {
       const parts = path.split("/");
       return parts[parts.length - 1] || path;
     },
-    copyLink(id) {
+    copyLink(rowOrId) {
+      const id = typeof rowOrId === "object" && rowOrId !== null ? rowOrId.id : rowOrId;
       const text = this.fileUrl(id);
       navigator.clipboard?.writeText(text).catch(() => {});
     },

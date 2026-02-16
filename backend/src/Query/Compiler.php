@@ -78,6 +78,12 @@ final class Compiler
             return "(files.type = ?)";
         }
 
+        if ($field === "ext") {
+            $ext = strtolower((string)$value);
+            $params[] = "%." . self::escapeLike($ext);
+            return "(LOWER(files.path) LIKE ? ESCAPE '\\')";
+        }
+
         if ($field === "path") {
             $patterns = [];
             foreach (self::pathNeedles((string)$value) as $needle) {

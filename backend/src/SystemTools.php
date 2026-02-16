@@ -27,45 +27,33 @@ final class SystemTools
         }
 
         $configured = self::configuredToolValues($config);
-        $exifCfg = $configured['exiftool'];
-        $ffmpegCfg = $configured['ffmpeg'];
-        $ffprobeCfg = $configured['ffprobe'];
-
-        $exif = self::resolveBinary($exifCfg, ['exiftool']);
-        $ffmpeg = self::resolveBinary($ffmpegCfg, ['ffmpeg']);
-        $ffprobe = self::resolveBinary($ffprobeCfg, ['ffprobe']);
 
         $status = [
             'checked_at' => date('c'),
-            'tools' => [
-                'exiftool' => [
-                    'available' => $exif !== null,
-                    'path' => $exif,
-                    'configured' => $exifCfg,
-                ],
-                'ffmpeg' => [
-                    'available' => $ffmpeg !== null,
-                    'path' => $ffmpeg,
-                    'configured' => $ffmpegCfg,
-                ],
-                'ffprobe' => [
-                    'available' => $ffprobe !== null,
-                    'path' => $ffprobe,
-                    'configured' => $ffprobeCfg,
-                ],
-            ],
+            'tools' => [],
             'overrides' => self::readOverrides(),
         ];
 
+        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
+            $configuredValue = $configured[$tool] ?? $tool;
+            $resolved = self::resolveBinary($configuredValue, [$tool]);
+            $status['tools'][$tool] = [
+                'available' => $resolved !== null,
+                'path' => $resolved,
+                'configured' => $configuredValue,
+                'version' => $resolved !== null ? self::toolVersion($tool, $resolved) : null,
+            ];
+        }
+
         self::$memory = $status;
-        self::writeCache($cachePath, $status);
+        self::writeJson($cachePath, $status);
         return $status;
     }
 
     public static function setOverrides(array $overrides): array
     {
         $current = self::readOverrides();
-        foreach (['exiftool', 'ffmpeg', 'ffprobe'] as $tool) {
+        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
             if (!array_key_exists($tool, $overrides)) {
                 continue;
             }
@@ -76,7 +64,6 @@ final class SystemTools
             }
             $current[$tool] = $value;
         }
-
         self::writeJson(self::overridePath(), $current);
         self::clearCache();
         return $current;
@@ -103,28 +90,25 @@ final class SystemTools
             'exiftool' => trim((string)($toolsCfg['exiftool'] ?? 'exiftool')),
             'ffmpeg' => trim((string)($toolsCfg['ffmpeg'] ?? 'ffmpeg')),
             'ffprobe' => trim((string)($toolsCfg['ffprobe'] ?? 'ffprobe')),
+            'soffice' => trim((string)($toolsCfg['soffice'] ?? 'soffice')),
+            'gs' => trim((string)($toolsCfg['gs'] ?? 'gs')),
         ];
 
         $overrides = self::readOverrides();
-        foreach (['exiftool', 'ffmpeg', 'ffprobe'] as $tool) {
+        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
             if (!isset($overrides[$tool])) {
                 continue;
             }
             $override = trim((string)$overrides[$tool]);
-            if ($override === '') {
-                continue;
+            if ($override !== '') {
+                $values[$tool] = $override;
             }
-            $values[$tool] = $override;
         }
 
-        if ($values['exiftool'] === '') {
-            $values['exiftool'] = 'exiftool';
-        }
-        if ($values['ffmpeg'] === '') {
-            $values['ffmpeg'] = 'ffmpeg';
-        }
-        if ($values['ffprobe'] === '') {
-            $values['ffprobe'] = 'ffprobe';
+        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
+            if (($values[$tool] ?? '') === '') {
+                $values[$tool] = $tool;
+            }
         }
 
         return $values;
@@ -148,7 +132,7 @@ final class SystemTools
         }
 
         $clean = [];
-        foreach (['exiftool', 'ffmpeg', 'ffprobe'] as $tool) {
+        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
             if (!isset($decoded[$tool])) {
                 continue;
             }
@@ -159,24 +143,6 @@ final class SystemTools
         }
 
         return $clean;
-    }
-
-    private static function writeJson(string $path, array $payload): void
-    {
-        $dir = dirname($path);
-        if (!is_dir($dir)) {
-            @mkdir($dir, 0755, true);
-        }
-
-        @file_put_contents(
-            $path,
-            json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-        );
-    }
-
-    private static function writeCache(string $cachePath, array $status): void
-    {
-        self::writeJson($cachePath, $status);
     }
 
     private static function cachePath(): string
@@ -194,7 +160,7 @@ final class SystemTools
         $configured = trim($configured);
         if ($configured !== '') {
             if (str_contains($configured, '/') || str_contains($configured, '\\')) {
-                return is_executable($configured) ? $configured : null;
+                return is_file($configured) && is_executable($configured) ? $configured : null;
             }
             $fromPath = self::findInPath($configured);
             if ($fromPath !== null) {
@@ -223,8 +189,7 @@ final class SystemTools
             return null;
         }
 
-        $parts = explode(PATH_SEPARATOR, $path);
-        foreach ($parts as $dir) {
+        foreach (explode(PATH_SEPARATOR, $path) as $dir) {
             if ($dir === '') {
                 continue;
             }
@@ -235,5 +200,41 @@ final class SystemTools
         }
 
         return null;
+    }
+
+    private static function toolVersion(string $tool, string $path): ?string
+    {
+        $args = match ($tool) {
+            'exiftool' => [$path, '-ver'],
+            'ffmpeg', 'ffprobe' => [$path, '-version'],
+            'soffice' => [$path, '--version'],
+            default => [$path, '--version'],
+        };
+        $output = self::runCommand($args);
+        if ($output === null) {
+            return null;
+        }
+        $line = trim((string)preg_split('/\R/', $output)[0]);
+        return $line !== '' ? $line : null;
+    }
+
+    private static function runCommand(array $args): ?string
+    {
+        $cmd = implode(' ', array_map('escapeshellarg', $args));
+        $out = @shell_exec($cmd . ' 2>&1');
+        if (!is_string($out)) {
+            return null;
+        }
+        return trim($out);
+    }
+
+    private static function writeJson(string $path, array $payload): void
+    {
+        $dir = dirname($path);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+
+        @file_put_contents($path, json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     }
 }

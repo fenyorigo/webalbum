@@ -1,10 +1,10 @@
-# Webalbum
+# Family memories
 
 Backend and frontend for browsing an indexer-produced SQLite database (read-only).
 
 ## Release
 
-- Current version: `1.2.0`
+- Current version: `1.4.0`
 - See `CHANGELOG.md` for release notes.
 
 ## Backend
@@ -29,6 +29,22 @@ Backend and frontend for browsing an indexer-produced SQLite database (read-only
 
 `POST /api/tags/prefs` (body: `{"tag":"...", "is_noise":0|1, "pinned":0|1}`)
 
+`POST /api/admin/assets/scan` (admin: scan docs/audio and enqueue derivatives)
+
+`GET /api/admin/assets` (admin: paged assets list with filters)
+
+`POST /api/admin/assets/requeue` (admin: requeue per-asset derivative jobs)
+
+`GET /api/admin/jobs/status` (admin: queue counts and errors)
+
+`GET /api/asset?id=<asset_id>` (asset metadata)
+
+`GET /api/asset/file?id=<asset_id>` (stream original doc/audio)
+
+`GET /api/asset/view?id=<asset_id>` (PDF viewer source)
+
+`GET /api/asset/thumb?id=<asset_id>` (doc thumb; triggers async generation if missing)
+
 `GET /api/media/{id}/tags`
 
 `POST /api/media/{id}/tags` (admin only, body: `{"tags":["András","Gergely"]}`)
@@ -50,7 +66,7 @@ Request body:
 }
 ```
 
-Response: array of rows with `id`, `path`, `taken_ts`, `type`.
+Response: paged object with rows (`items`) including `id`, `path`, `taken_ts`, `type`, and optional `entity`/`asset_id` for document/audio assets.
 
 Enable debug SQL output by appending `?debug=1` or setting `WEBALBUM_DEBUG_SQL=1`.
 
@@ -78,7 +94,7 @@ npm run build
 
 ## Config
 
-Set `WA_SQLITE_DB`, `WA_PHOTOS_ROOT`, `WA_THUMBS_ROOT`, `WA_TRASH_ROOT`, `WA_TRASH_THUMBS_ROOT`, `WA_THUMB_MAX`, `WA_THUMB_QUALITY`, `WA_EXIFTOOL_PATH` or edit `backend/config/config.php`.
+Set `WA_SQLITE_DB`, `WA_PHOTOS_ROOT`, `WA_THUMBS_ROOT`, `WA_TRASH_ROOT`, `WA_TRASH_THUMBS_ROOT`, `WA_THUMB_MAX`, `WA_THUMB_QUALITY`, `WA_EXIFTOOL_PATH`, `WA_FFMPEG_BIN`, `WA_FFPROBE_BIN`, `WA_SOFFICE_PATH`, `WA_GS_PATH` or edit `backend/config/config.php`.
 
 Example:
 
@@ -91,15 +107,21 @@ export WA_TRASH_THUMBS_ROOT="/Users/bajanp/Projects/indexer-test-thumbs-trash"
 export WA_THUMB_MAX="256"
 export WA_THUMB_QUALITY="75"
 export WA_EXIFTOOL_PATH="exiftool"
+export WA_FFMPEG_BIN="ffmpeg"
+export WA_FFPROBE_BIN="ffprobe"
+export WA_SOFFICE_PATH="soffice"
+export WA_GS_PATH="gs"
 ```
 
 
 ## System tool checks
 
-- On backend startup/first use, Webalbum checks `ffmpeg` and `exiftool` availability and caches the result in `backend/var/external_tools_status.json`.
-- Health endpoint includes tool status: `GET /api/health` (`tools` + `tools_checked_at`).
-- Admin can force a refresh from UI (`Admin ▾` -> `Recheck system tools`) or via API: `POST /api/admin/tools/recheck`.
-- If `ffmpeg` is missing, video thumbnail generation is disabled gracefully (placeholder thumbs are served).
+- On backend startup/first use, Webalbum checks `ffmpeg`, `ffprobe`, `exiftool`, `soffice`, and `gs` and caches the result in `backend/var/external_tools_status.json`.
+- Tool checks are forced on every successful admin login.
+- Admin can inspect paths + versions + overrides from UI (`Admin ▾` -> `Required tools`) or API: `GET /api/admin/tools/status`.
+- Admin can set manual absolute tool paths via `POST /api/admin/tools/configure` and recheck via `POST /api/admin/tools/recheck`.
+- `soffice` is required for Office/TXT -> PDF conversions.
+- `gs` (Ghostscript) is required for PDF page rendering used by document thumbnails.
 
 
 ## Security notes
@@ -208,3 +230,27 @@ php backend/bin/path_guard_check.php
 ```
 
 This check verifies that an outside path such as `/etc/passwd` is rejected by the shared path guard used by file/thumb/download endpoints.
+
+
+## Documents & Audio Assets
+
+- Apply migration: `backend/sql/mysql/013_assets_and_jobs.sql`.
+- Supported extensions:
+  - Documents: `pdf`, `txt`, `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`
+  - Audio: `mp3`, `m4a`, `flac`
+- Admin actions:
+  - `Admin ▾ -> Assets` opens the Assets page (scan, job summary, filters, per-asset requeue).
+- Worker:
+  - Run once: `php backend/bin/assets_worker.php --once`
+  - Run batch: `php backend/bin/assets_worker.php --max-jobs=200`
+  - Recommended: run from cron/systemd timer.
+- Viewer behavior:
+  - Audio opens in an HTML5 audio player modal.
+  - Documents open in PDF viewer modal (`/api/asset/view`).
+  - Office docs are converted asynchronously to PDF via `soffice --headless`.
+- Derivative safety:
+  - Derivatives are published atomically (`*.tmp` + rename).
+  - `ready` status is set only when the real output file exists and is readable.
+  - Placeholder responses are never written as final derivative files.
+- Fedora/SELinux note:
+  - Ensure Apache/PHP worker context can execute `soffice` and write to `WA_THUMBS_ROOT` (and tmp dir used by conversion).

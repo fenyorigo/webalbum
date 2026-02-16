@@ -37,6 +37,8 @@ use WebAlbum\Http\Controllers\AuditLogController;
 use WebAlbum\Http\Controllers\AdminTrashController;
 use WebAlbum\Http\Controllers\MaintenanceController;
 use WebAlbum\Http\Controllers\TreeController;
+use WebAlbum\Http\Controllers\AdminAssetsController;
+use WebAlbum\Http\Controllers\AssetController;
 
 $method = $_SERVER["REQUEST_METHOD"] ?? "GET";
 $uri = $_SERVER["REQUEST_URI"] ?? "/";
@@ -139,6 +141,46 @@ if ($method === "GET" && $path === "/api/admin/audit-logs/meta") {
 }
 if ($method === "POST" && $path === "/api/admin/tags/reenable-all") {
     (new TagsController($root . "/config/config.php"))->handleReenableAll();
+    exit;
+}
+if ($method === "GET" && $path === "/api/admin/assets") {
+    (new AdminAssetsController($root . "/config/config.php"))->listAssets();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/assets/requeue") {
+    (new AdminAssetsController($root . "/config/config.php"))->requeue();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/assets/scan") {
+    (new AdminAssetsController($root . "/config/config.php"))->scan();
+    exit;
+}
+if ($method === "GET" && $path === "/api/admin/jobs/status") {
+    (new AdminAssetsController($root . "/config/config.php"))->jobsStatus();
+    exit;
+}
+if ($method === "GET" && $path === "/api/asset") {
+    $id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+    (new AssetController($root . "/config/config.php"))->get($id);
+    exit;
+}
+if ($method === "GET" && preg_match("#^/api/asset/(\d+)$#", $path, $m)) {
+    (new AssetController($root . "/config/config.php"))->get((int)$m[1]);
+    exit;
+}
+if ($method === "GET" && $path === "/api/asset/file") {
+    $id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+    (new AssetController($root . "/config/config.php"))->file($id);
+    exit;
+}
+if ($method === "GET" && $path === "/api/asset/view") {
+    $id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+    (new AssetController($root . "/config/config.php"))->view($id);
+    exit;
+}
+if ($method === "GET" && $path === "/api/asset/thumb") {
+    $id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+    (new AssetController($root . "/config/config.php"))->thumb($id);
     exit;
 }
 if ($method === "GET" && $path === "/api/admin/trash") {

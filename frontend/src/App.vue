@@ -2,8 +2,8 @@
   <div id="app">
     <nav class="top">
       <div class="brand">
-        Webalbum
-        <span class="version">v1.2.0</span>
+        Family memories
+        <span class="version">v1.4.0</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>
@@ -19,10 +19,12 @@
             <button type="button" @click="openUserManagement">User management</button>
             <button type="button" @click="openLogs">View logs</button>
             <button type="button" @click="openTrash">Trash</button>
+            <button type="button" @click="openAssetsPage">Assets</button>
+            <button type="button" @click="scanAssets">Scan documents and audio</button>
+            <button type="button" @click="openJobStatus">Job status</button>
             <button type="button" @click="openRequiredTools">Required tools</button>
             <button type="button" @click="runCleanStructure">Clean structure</button>
             <button type="button" @click="runPurgePlaceholderThumbs">Purge placeholder thumbs</button>
-            <button type="button" @click="recheckSystemTools">Recheck system tools</button>
             <button type="button" @click="reenableAllTags">Re-enable all tags</button>
           </div>
         </div>
@@ -157,6 +159,7 @@
               <th>Tool</th>
               <th>Status</th>
               <th>Resolved path</th>
+              <th>Version</th>
             </tr>
           </thead>
           <tbody>
@@ -164,11 +167,31 @@
               <td>exiftool</td>
               <td>{{ toolAvailable("exiftool") ? "Found" : "Missing" }}</td>
               <td>{{ toolResolvedPath("exiftool") }}</td>
+              <td>{{ toolVersion("exiftool") }}</td>
             </tr>
             <tr>
               <td>ffmpeg</td>
               <td>{{ toolAvailable("ffmpeg") ? "Found" : "Missing" }}</td>
               <td>{{ toolResolvedPath("ffmpeg") }}</td>
+              <td>{{ toolVersion("ffmpeg") }}</td>
+            </tr>
+            <tr>
+              <td>ffprobe</td>
+              <td>{{ toolAvailable("ffprobe") ? "Found" : "Missing" }}</td>
+              <td>{{ toolResolvedPath("ffprobe") }}</td>
+              <td>{{ toolVersion("ffprobe") }}</td>
+            </tr>
+            <tr>
+              <td>soffice</td>
+              <td>{{ toolAvailable("soffice") ? "Found" : "Missing" }}</td>
+              <td>{{ toolResolvedPath("soffice") }}</td>
+              <td>{{ toolVersion("soffice") }}</td>
+            </tr>
+            <tr>
+              <td>gs</td>
+              <td>{{ toolAvailable("gs") ? "Found" : "Missing" }}</td>
+              <td>{{ toolResolvedPath("gs") }}</td>
+              <td>{{ toolVersion("gs") }}</td>
             </tr>
           </tbody>
         </table>
@@ -184,12 +207,162 @@
             <input v-model.trim="toolForm.ffmpeg" type="text" placeholder="/usr/sbin/ffmpeg" />
           </label>
         </div>
+        <div v-if="!toolAvailable('ffprobe')" class="tool-input">
+          <label>
+            ffprobe full path
+            <input v-model.trim="toolForm.ffprobe" type="text" placeholder="/usr/sbin/ffprobe" />
+          </label>
+        </div>
+        <div v-if="!toolAvailable('soffice')" class="tool-input">
+          <label>
+            soffice full path
+            <input v-model.trim="toolForm.soffice" type="text" placeholder="/usr/lib64/libreoffice/program/soffice" />
+          </label>
+        </div>
+        <div v-if="!toolAvailable('gs')" class="tool-input">
+          <label>
+            gs full path
+            <input v-model.trim="toolForm.gs" type="text" placeholder="/opt/homebrew/bin/gs" />
+          </label>
+        </div>
         <div class="modal-actions">
           <button class="inline" @click="saveRequiredTools" :disabled="loading || !hasToolPathInput">Save paths</button>
           <button class="inline" @click="recheckSystemTools" :disabled="loading">Recheck</button>
           <button class="inline" @click="closeRequiredTools" :disabled="loading">Close</button>
         </div>
         <p v-if="toolsError" class="error">{{ toolsError }}</p>
+      </div>
+    </div>
+
+    <div v-if="jobsOpen" class="modal-backdrop" @click.self="closeJobs">
+      <div class="modal tools-modal">
+        <div class="modal-header">
+          <h3>Asset jobs</h3>
+          <button class="inline" type="button" @click="closeJobs">Close</button>
+        </div>
+        <p v-if="jobsError" class="error">{{ jobsError }}</p>
+        <div v-else>
+          <p class="muted">
+            Queued: {{ jobsStatus.counts.queued || 0 }} ·
+            Running: {{ jobsStatus.counts.running || 0 }} ·
+            Done: {{ jobsStatus.counts.done || 0 }} ·
+            Error: {{ jobsStatus.counts.error || 0 }}
+          </p>
+          <p class="muted" v-if="jobsStatus.split">
+            Queued split: thumb {{ jobsStatus.split.queued.doc_thumb || 0 }}, preview {{ jobsStatus.split.queued.doc_pdf_preview || 0 }}
+            <span v-if="jobsStatus.split.queued.other">, other {{ jobsStatus.split.queued.other }}</span>
+            ·
+            Running split: thumb {{ jobsStatus.split.running.doc_thumb || 0 }}, preview {{ jobsStatus.split.running.doc_pdf_preview || 0 }}
+            <span v-if="jobsStatus.split.running.other">, other {{ jobsStatus.split.running.other }}</span>
+          </p>
+          <table class="tags-table" v-if="jobsStatus.recent_errors && jobsStatus.recent_errors.length">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Type</th>
+                <th>Attempts</th>
+                <th>Error</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in jobsStatus.recent_errors" :key="row.id">
+                <td>{{ row.id }}</td>
+                <td>{{ row.job_type }}</td>
+                <td>{{ row.attempts }}</td>
+                <td>{{ row.last_error }}</td>
+                <td>{{ row.updated_at }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="muted">No recent errors.</p>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="scanOpen" class="modal-backdrop" @click.self="closeScanModal">
+      <div class="modal scan-modal">
+        <div class="modal-header">
+          <h3>Scan documents and audio</h3>
+          <button
+            class="inline"
+            type="button"
+            @click="clearScanList"
+            :disabled="scanClearableCount === 0"
+            title="Only completed items can be cleared."
+          >
+            Clear list
+          </button>
+        </div>
+
+        <div v-if="scanStage === 'confirm'">
+          <p>
+            Scan your photo library for documents and audio files, then queue any required processing
+            (thumbnails/previews) for supported document types.
+          </p>
+          <p class="note">Note: Audio assets do not generate thumbnails or previews.</p>
+          <div class="modal-actions">
+            <button class="inline" type="button" @click="startScan" :disabled="scanLoading">Start scan</button>
+            <button class="inline" type="button" @click="closeScanModal" :disabled="scanLoading">Cancel</button>
+          </div>
+        </div>
+
+        <div v-else>
+          <p v-if="scanSummary" class="muted">
+            Scanned: {{ scanSummary.scanned }} · Documents: {{ scanSummary.scanned_docs }} · Audio: {{ scanSummary.scanned_audio }} ·
+            Inserted: {{ scanSummary.inserted }} · Updated: {{ scanSummary.updated }} · Jobs queued: {{ scanSummary.jobs_enqueued }}
+          </p>
+          <div class="scan-counters">
+            <span>Pending: {{ scanCounters.pending }}</span>
+            <span>Running: {{ scanCounters.running }}</span>
+            <span>Ready: {{ scanCounters.ready }}</span>
+            <span>No processing needed: {{ scanCounters.no_processing }}</span>
+            <span>Failed: {{ scanCounters.failed }}</span>
+          </div>
+          <div class="scan-tabs">
+            <button class="inline" :class="{ active: scanTab === 'pending' }" @click="scanTab = 'pending'">Pending</button>
+            <button class="inline" :class="{ active: scanTab === 'running' }" @click="scanTab = 'running'">Running</button>
+            <button class="inline" :class="{ active: scanTab === 'ready' }" @click="scanTab = 'ready'">Ready</button>
+            <button class="inline" :class="{ active: scanTab === 'no_processing' }" @click="scanTab = 'no_processing'">No processing needed</button>
+            <button class="inline" :class="{ active: scanTab === 'failed' }" @click="scanTab = 'failed'">Failed</button>
+            <button class="inline" @click="refreshScanItems" :disabled="scanLoading">Refresh</button>
+          </div>
+          <table class="tags-table scan-table" v-if="scanRowsForTab.length">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Thumbnail</th>
+                <th>Preview</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in scanRowsForTab" :key="row.id">
+                <td :title="row.rel_path">{{ scanName(row.rel_path) }}</td>
+                <td>{{ row.type }}</td>
+                <td>{{ displayScanStatus(row.thumb_status) }}</td>
+                <td>{{ displayScanStatus(row.preview_status) }}</td>
+                <td>{{ displayScanStatus(overallScanStatus(row)) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="muted">No items in this section.</p>
+          <div class="modal-actions">
+            <button
+              class="inline"
+              type="button"
+              @click="clearScanList"
+              :disabled="scanClearableCount === 0"
+              title="Only completed items can be cleared."
+            >
+              Clear list
+            </button>
+            <button class="inline" type="button" @click="closeScanModal">Close</button>
+          </div>
+        </div>
+
+        <p v-if="scanError" class="error">{{ scanError }}</p>
       </div>
     </div>
 
@@ -389,9 +562,28 @@ export default {
       toolsOpen: false,
       toolForm: {
         exiftool: "",
-        ffmpeg: ""
+        ffmpeg: "",
+        ffprobe: "",
+        soffice: "",
+        gs: ""
       },
-      toolsError: ""
+      toolsError: "",
+      jobsOpen: false,
+      jobsStatus: {
+        counts: {},
+        recent_errors: [],
+        running: []
+      },
+      jobsError: "",
+      scanOpen: false,
+      scanStage: "confirm",
+      scanLoading: false,
+      scanError: "",
+      scanSummary: null,
+      scanItems: [],
+      scanTab: "pending",
+      scanClearedIds: [],
+      scanTimer: null
     };
   },
   mounted() {
@@ -402,6 +594,7 @@ export default {
   beforeUnmount() {
     window.removeEventListener("wa-auth-changed", this.onAuthChanged);
     window.removeEventListener("wa-prefs-refresh", this.loadPrefs);
+    this.stopScanRefresh();
   },
   computed: {
     forceChangeRequired() {
@@ -422,10 +615,22 @@ export default {
       if (!tools.exiftool || tools.exiftool.available !== true) {
         warnings.push("Media tag editing disabled: exiftool not found on server");
       }
+      if (!tools.soffice || tools.soffice.available !== true) {
+        warnings.push("Office preview conversion disabled: soffice not found on server");
+      }
+      if (!tools.gs || tools.gs.available !== true) {
+        warnings.push("Document thumbnail rendering disabled: ghostscript (gs) not found on server");
+      }
       return warnings;
     },
     hasToolPathInput() {
-      if (this.toolAvailable("exiftool") && this.toolAvailable("ffmpeg")) {
+      if (
+        this.toolAvailable("exiftool") &&
+        this.toolAvailable("ffmpeg") &&
+        this.toolAvailable("ffprobe") &&
+        this.toolAvailable("soffice") &&
+        this.toolAvailable("gs")
+      ) {
         return false;
       }
       if (!this.toolAvailable("exiftool") && this.toolForm.exiftool) {
@@ -434,7 +639,44 @@ export default {
       if (!this.toolAvailable("ffmpeg") && this.toolForm.ffmpeg) {
         return true;
       }
+      if (!this.toolAvailable("ffprobe") && this.toolForm.ffprobe) {
+        return true;
+      }
+      if (!this.toolAvailable("soffice") && this.toolForm.soffice) {
+        return true;
+      }
+      if (!this.toolAvailable("gs") && this.toolForm.gs) {
+        return true;
+      }
       return false;
+    },
+    scanVisibleItems() {
+      if (!this.scanItems.length) {
+        return [];
+      }
+      const cleared = new Set(this.scanClearedIds);
+      return this.scanItems.filter((row) => !cleared.has(Number(row.id)));
+    },
+    scanCounters() {
+      const out = { pending: 0, running: 0, ready: 0, no_processing: 0, failed: 0 };
+      this.scanVisibleItems.forEach((row) => {
+        const status = this.overallScanStatus(row);
+        if (status === "pending") out.pending += 1;
+        else if (status === "running") out.running += 1;
+        else if (status === "ready") out.ready += 1;
+        else if (status === "no_processing") out.no_processing += 1;
+        else if (status === "failed") out.failed += 1;
+      });
+      return out;
+    },
+    scanRowsForTab() {
+      return this.scanVisibleItems.filter((row) => this.overallScanStatus(row) === this.scanTab);
+    },
+    scanClearableCount() {
+      return this.scanVisibleItems.filter((row) => {
+        const status = this.overallScanStatus(row);
+        return status === "ready" || status === "no_processing";
+      }).length;
     }
   },
   methods: {
@@ -526,17 +768,24 @@ export default {
       }
       return "—";
     },
+    toolVersion(name) {
+      const tools = this.toolStatus && this.toolStatus.tools ? this.toolStatus.tools : {};
+      if (tools[name] && tools[name].version) {
+        return tools[name].version;
+      }
+      return "—";
+    },
     async openRequiredTools() {
       this.adminOpen = false;
       this.toolsError = "";
-      this.toolForm = { exiftool: "", ffmpeg: "" };
+      this.toolForm = { exiftool: "", ffmpeg: "", ffprobe: "", soffice: "", gs: "" };
       await this.recheckSystemTools(true);
       this.toolsOpen = true;
     },
     closeRequiredTools() {
       this.toolsOpen = false;
       this.toolsError = "";
-      this.toolForm = { exiftool: "", ffmpeg: "" };
+      this.toolForm = { exiftool: "", ffmpeg: "", ffprobe: "", soffice: "", gs: "" };
     },
     async saveRequiredTools() {
       if (!this.hasToolPathInput) {
@@ -551,6 +800,15 @@ export default {
         }
         if (!this.toolAvailable("ffmpeg") && this.toolForm.ffmpeg) {
           payload.ffmpeg = this.toolForm.ffmpeg;
+        }
+        if (!this.toolAvailable("ffprobe") && this.toolForm.ffprobe) {
+          payload.ffprobe = this.toolForm.ffprobe;
+        }
+        if (!this.toolAvailable("soffice") && this.toolForm.soffice) {
+          payload.soffice = this.toolForm.soffice;
+        }
+        if (!this.toolAvailable("gs") && this.toolForm.gs) {
+          payload.gs = this.toolForm.gs;
         }
         const res = await fetch("/api/admin/tools/configure", {
           method: "POST",
@@ -568,7 +826,7 @@ export default {
           return;
         }
         this.applyToolStatus(data);
-        this.toolForm = { exiftool: "", ffmpeg: "" };
+        this.toolForm = { exiftool: "", ffmpeg: "", ffprobe: "", soffice: "", gs: "" };
       } catch (err) {
         this.toolsError = "Saving tool paths failed";
       } finally {
@@ -615,6 +873,194 @@ export default {
     openTrash() {
       this.adminOpen = false;
       this.$router.push("/trash");
+    },
+    openAssetsPage() {
+      this.adminOpen = false;
+      this.$router.push("/assets");
+    },
+    scanAssets() {
+      this.adminOpen = false;
+      this.scanOpen = true;
+      this.scanStage = "confirm";
+      this.scanError = "";
+      this.scanSummary = null;
+      this.scanItems = [];
+        this.scanTab = "pending";
+      this.scanClearedIds = [];
+      this.stopScanRefresh();
+    },
+    closeScanModal() {
+      this.scanOpen = false;
+      this.scanError = "";
+      this.scanLoading = false;
+      this.scanStage = "confirm";
+      this.scanSummary = null;
+      this.scanItems = [];
+      this.scanClearedIds = [];
+      this.stopScanRefresh();
+    },
+    async startScan() {
+      this.scanLoading = true;
+      this.scanError = "";
+      try {
+        const res = await fetch("/api/admin/assets/scan", { method: "POST" });
+        if (res.status === 401 || res.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          this.scanError = data.error || "Scan failed";
+          return;
+        }
+        this.scanSummary = {
+          scanned: Number(data.scanned || 0),
+          scanned_docs: Number(data.scanned_docs || 0),
+          scanned_audio: Number(data.scanned_audio || 0),
+          inserted: Number(data.inserted || 0),
+          updated: Number(data.updated || 0),
+          jobs_enqueued: Number(data.jobs_enqueued || 0)
+        };
+        this.scanStage = "status";
+        await this.refreshScanItems();
+      } catch (_err) {
+        this.scanError = "Scan failed";
+      } finally {
+        this.scanLoading = false;
+      }
+    },
+    async refreshScanItems() {
+      this.scanLoading = true;
+      this.scanError = "";
+      try {
+        const qs = new URLSearchParams();
+        qs.set("page", "1");
+        qs.set("page_size", "500");
+        qs.set("sort_field", "updated_at");
+        qs.set("sort_dir", "desc");
+        const res = await fetch(`/api/admin/assets?${qs.toString()}`);
+        if (res.status === 401 || res.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          this.scanError = data.error || "Failed to load scan status";
+          return;
+        }
+        this.scanItems = Array.isArray(data.items) ? data.items : [];
+        this.updateScanRefresh();
+      } catch (_err) {
+        this.scanError = "Failed to load scan status";
+      } finally {
+        this.scanLoading = false;
+      }
+    },
+    updateScanRefresh() {
+      if (!this.scanOpen || this.scanStage !== "status") {
+        this.stopScanRefresh();
+        return;
+      }
+      if (this.scanCounters.pending > 0 || this.scanCounters.running > 0) {
+        if (!this.scanTimer) {
+          this.scanTimer = window.setInterval(() => {
+            if (!this.scanOpen || this.scanStage !== "status") {
+              this.stopScanRefresh();
+              return;
+            }
+            if (!this.scanLoading) {
+              this.refreshScanItems();
+            }
+          }, 15000);
+        }
+      } else {
+        this.stopScanRefresh();
+      }
+    },
+    stopScanRefresh() {
+      if (this.scanTimer) {
+        clearInterval(this.scanTimer);
+        this.scanTimer = null;
+      }
+    },
+    scanName(relPath) {
+      if (!relPath) return "";
+      const parts = String(relPath).split("/");
+      return parts[parts.length - 1];
+    },
+    displayScanStatus(status) {
+      const s = String(status || "").toLowerCase();
+      if (s === "na") return "N/A";
+      if (s === "pending") return "Pending";
+      if (s === "running") return "Running";
+      if (s === "ready") return "Ready";
+      if (s === "error" || s === "failed") return "Failed";
+      return "N/A";
+    },
+    overallScanStatus(row) {
+      const thumb = String(row.thumb_status || "").toLowerCase();
+      const preview = String(row.preview_status || "").toLowerCase();
+      const thumbApplicable = Number(row.thumb_applicable || 0) === 1;
+      const previewApplicable = Number(row.preview_applicable || 0) === 1;
+
+      if (!thumbApplicable && !previewApplicable) {
+        return "no_processing";
+      }
+      if (thumb === "error" || preview === "error") {
+        return "failed";
+      }
+      if (thumb === "running" || preview === "running") {
+        return "running";
+      }
+      if (thumb === "pending" || preview === "pending") {
+        return "pending";
+      }
+      return "ready";
+    },
+    clearScanList() {
+      if (this.scanClearableCount === 0) {
+        return;
+      }
+      const ids = this.scanVisibleItems
+        .filter((row) => {
+          const status = this.overallScanStatus(row);
+          return status === "ready" || status === "no_processing";
+        })
+        .map((row) => Number(row.id));
+      this.scanClearedIds = Array.from(new Set([...this.scanClearedIds, ...ids]));
+      this.updateScanRefresh();
+    },
+    async openJobStatus() {
+      this.adminOpen = false;
+      this.jobsError = "";
+      this.jobsStatus = { counts: {}, recent_errors: [], running: [] };
+      this.jobsOpen = true;
+      this.loading = true;
+      try {
+        const res = await fetch("/api/admin/jobs/status");
+        if (res.status === 401 || res.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          this.jobsError = data.error || "Failed to load job status";
+          return;
+        }
+        this.jobsStatus = data;
+      } catch (_err) {
+        this.jobsError = "Failed to load job status";
+      } finally {
+        this.loading = false;
+      }
+    },
+    closeJobs() {
+      this.jobsOpen = false;
+      this.jobsError = "";
+      this.jobsStatus = { counts: {}, recent_errors: [], running: [] };
     },
     async reenableAllTags() {
       this.adminOpen = false;
@@ -2220,6 +2666,51 @@ button:disabled {
 
 .user-edit {
   width: min(500px, 90vw);
+}
+
+.scan-modal {
+  width: min(1100px, 96vw);
+  max-height: 85vh;
+  overflow: auto;
+}
+
+.scan-counters {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.scan-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.scan-tabs .active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.scan-table td,
+.scan-table th {
+  white-space: nowrap;
+}
+
+.scan-table td:first-child {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #fff7df;
+  border: 1px solid #ead89e;
+  border-radius: 8px;
+  color: #5d4a1f;
 }
 </style>
 

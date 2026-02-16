@@ -13,9 +13,10 @@ final class Model
         "taken" => ["before", "after", "between"],
         "type" => ["is", "is_not"],
         "path" => ["contains", "starts_with"],
+        "ext" => ["is"],
     ];
 
-    private const TYPES = ["image", "video", "other"];
+    private const TYPES = ["image", "video", "audio", "doc", "other"];
 
     public static function validateSearch(array $input): array
     {
@@ -198,8 +199,13 @@ final class Model
             }
         } elseif ($field === "type") {
             if (!is_string($value) || !in_array($value, self::TYPES, true)) {
-                throw new \InvalidArgumentException("type must be image, video, or other");
+                throw new \InvalidArgumentException("type must be image, video, audio, doc, or other");
             }
+        } elseif ($field === "ext") {
+            if (!is_string($value) || !preg_match('/^[A-Za-z0-9]{1,10}$/', $value)) {
+                throw new \InvalidArgumentException("ext must be a simple extension (1..10 alnum chars)");
+            }
+            $value = strtolower($value);
         } elseif ($field === "path") {
             if (!is_string($value) || $value === "") {
                 throw new \InvalidArgumentException("path value must be a non-empty string");

@@ -12,10 +12,11 @@
       </tr>
     </thead>
     <tbody>
-      <tr v-for="(row, idx) in items" :key="row.id">
+      <tr v-for="(row, idx) in items" :key="`${row.entity || 'media'}:${row.id}`">
         <td class="num">{{ offset + idx + 1 }}</td>
         <td>
           <input
+            v-if="isSelectable(row)"
             type="checkbox"
             :value="row.id"
             :checked="selectedIds.includes(row.id)"
@@ -26,19 +27,19 @@
         <td class="thumb">
           <button class="link" type="button" @click="$emit('open', row.id)">
             <img
-              v-if="row.type === 'image' || row.type === 'video'"
-              :src="thumbUrl(row.id)"
+              v-if="row.type === 'image' || row.type === 'video' || row.type === 'doc'"
+              :src="thumbUrl(row)"
               :alt="fileName(row.path)"
               loading="lazy"
               class="thumb-img"
               @load="markLoaded"
             />
-            <span v-else class="thumb-placeholder">▶</span>
+            <span v-else class="thumb-placeholder">🎵</span>
           </button>
         </td>
         <td class="fav">
           <button
-            v-if="canFavorite"
+            v-if="canFavorite && row.entity !== 'asset'"
             class="star"
             type="button"
             :aria-label="row.is_favorite ? 'Unstar' : 'Star'"
@@ -51,7 +52,7 @@
           <button class="link text" type="button" @click="$emit('open', row.id)">
             {{ row.path }}
           </button>
-          <button class="copy" type="button" @click="copyLink(row.id)">Copy</button>
+          <button class="copy" type="button" @click="copyLink(row)">Copy</button>
         </td>
         <td>{{ row.type }}</td>
         <td><span v-if="row.taken_ts" class="ts">{{ formatTs(row.taken_ts) }}</span></td>
@@ -75,6 +76,9 @@ export default {
     fileName: { type: Function, required: true }
   },
   methods: {
+    isSelectable(row) {
+      return !!row;
+    },
     toggleSelected(id, checked) {
       const already = this.selectedIds.includes(id);
       const next = checked
