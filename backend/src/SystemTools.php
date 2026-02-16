@@ -8,6 +8,8 @@ final class SystemTools
 {
     private static ?array $memory = null;
 
+    private const BINARY_TOOLS = ['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs', 'imagemagick', 'pecl'];
+
     public static function checkExternalTools(array $config, bool $force = false): array
     {
         if (!$force && self::$memory !== null) {
@@ -34,9 +36,9 @@ final class SystemTools
             'overrides' => self::readOverrides(),
         ];
 
-        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
+        foreach (self::BINARY_TOOLS as $tool) {
             $configuredValue = $configured[$tool] ?? $tool;
-            $resolved = self::resolveBinary($configuredValue, [$tool]);
+            $resolved = self::resolveBinary($configuredValue, self::fallbackNames($tool));
             $status['tools'][$tool] = [
                 'available' => $resolved !== null,
                 'path' => $resolved,
@@ -44,6 +46,15 @@ final class SystemTools
                 'version' => $resolved !== null ? self::toolVersion($tool, $resolved) : null,
             ];
         }
+
+        $imagickVersion = phpversion('imagick');
+        $imagickAvailable = extension_loaded('imagick') && class_exists('Imagick');
+        $status['tools']['imagick_ext'] = [
+            'available' => $imagickAvailable,
+            'path' => $imagickAvailable ? 'php extension' : null,
+            'configured' => 'php extension',
+            'version' => is_string($imagickVersion) && $imagickVersion !== '' ? $imagickVersion : null,
+        ];
 
         self::$memory = $status;
         self::writeJson($cachePath, $status);
@@ -53,7 +64,7 @@ final class SystemTools
     public static function setOverrides(array $overrides): array
     {
         $current = self::readOverrides();
-        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
+        foreach (self::BINARY_TOOLS as $tool) {
             if (!array_key_exists($tool, $overrides)) {
                 continue;
             }
@@ -92,10 +103,12 @@ final class SystemTools
             'ffprobe' => trim((string)($toolsCfg['ffprobe'] ?? 'ffprobe')),
             'soffice' => trim((string)($toolsCfg['soffice'] ?? 'soffice')),
             'gs' => trim((string)($toolsCfg['gs'] ?? 'gs')),
+            'imagemagick' => trim((string)($toolsCfg['imagemagick'] ?? 'magick')),
+            'pecl' => trim((string)($toolsCfg['pecl'] ?? 'pecl')),
         ];
 
         $overrides = self::readOverrides();
-        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
+        foreach (self::BINARY_TOOLS as $tool) {
             if (!isset($overrides[$tool])) {
                 continue;
             }
@@ -105,7 +118,7 @@ final class SystemTools
             }
         }
 
-        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
+        foreach (self::BINARY_TOOLS as $tool) {
             if (($values[$tool] ?? '') === '') {
                 $values[$tool] = $tool;
             }
@@ -132,7 +145,7 @@ final class SystemTools
         }
 
         $clean = [];
-        foreach (['exiftool', 'ffmpeg', 'ffprobe', 'soffice', 'gs'] as $tool) {
+        foreach (self::BINARY_TOOLS as $tool) {
             if (!isset($decoded[$tool])) {
                 continue;
             }
@@ -178,6 +191,14 @@ final class SystemTools
         return null;
     }
 
+    private static function fallbackNames(string $tool): array
+    {
+        return match ($tool) {
+            'imagemagick' => ['magick', 'convert'],
+            default => [$tool],
+        };
+    }
+
     private static function findInPath(string $binary): ?string
     {
         if ($binary === '') {
@@ -208,6 +229,7 @@ final class SystemTools
             'exiftool' => [$path, '-ver'],
             'ffmpeg', 'ffprobe' => [$path, '-version'],
             'soffice' => [$path, '--version'],
+            'pecl' => [$path, 'version'],
             default => [$path, '--version'],
         };
         $output = self::runCommand($args);

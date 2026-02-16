@@ -42,7 +42,8 @@ $processed = 0;
 while (true) {
     $job = Jobs::claimNext($db, $workerId);
     if ($job === null) {
-        if ($once || ($maxJobs > 0 && $processed >= $maxJobs)) {
+        // Batch mode: stop when queue is currently empty.
+        if ($once || $maxJobs > 0) {
             break;
         }
         usleep(300000);

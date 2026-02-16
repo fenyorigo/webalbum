@@ -45,8 +45,25 @@ final class SearchController
             $requestedType = $this->extractRequestedType($query['where']);
             $extFilters = $this->extractExtFilters($query['where']);
 
+            // Extension filters apply only to MariaDB assets (docs/audio), so avoid mixed-source duplicates.
+            if ($extFilters !== []) {
+                if ($requestedType === 'image' || $requestedType === 'video' || $requestedType === 'other') {
+                    $this->json([
+                        'items' => [],
+                        'total' => 0,
+                        'offset' => (int)$query['offset'],
+                        'limit' => (int)$query['limit'],
+                    ]);
+                    return;
+                }
+                $typeFilter = ($requestedType === 'doc' || $requestedType === 'audio') ? $requestedType : null;
+                $assetResult = $this->searchAssetsOnly($maria, $sqlite, $query, $typeFilter, $extFilters);
+                $this->json($assetResult);
+                return;
+            }
+
             if ($requestedType === 'doc' || $requestedType === 'audio') {
-                $assetResult = $this->searchAssetsOnly($maria, $sqlite, $query, $requestedType, $extFilters);
+                $assetResult = $this->searchAssetsOnly($maria, $sqlite, $query, $requestedType, []);
                 $this->json($assetResult);
                 return;
             }
@@ -57,7 +74,7 @@ final class SearchController
                 return;
             }
 
-            $assetResult = $this->searchAssetsOnly($maria, $sqlite, $query, null, $extFilters);
+            $assetResult = $this->searchAssetsOnly($maria, $sqlite, $query, null, []);
             $merged = $this->mergeResultSets($mediaResult, $assetResult, $query);
             $this->json($merged);
         } catch (\JsonException $e) {

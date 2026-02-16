@@ -3,7 +3,7 @@
     <nav class="top">
       <div class="brand">
         Family memories
-        <span class="version">v1.4.0</span>
+        <span class="version">v1.4.1</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>
@@ -193,6 +193,24 @@
               <td>{{ toolResolvedPath("gs") }}</td>
               <td>{{ toolVersion("gs") }}</td>
             </tr>
+            <tr>
+              <td>imagemagick</td>
+              <td>{{ toolAvailable("imagemagick") ? "Found" : "Missing" }}</td>
+              <td>{{ toolResolvedPath("imagemagick") }}</td>
+              <td>{{ toolVersion("imagemagick") }}</td>
+            </tr>
+            <tr>
+              <td>pecl</td>
+              <td>{{ toolAvailable("pecl") ? "Found" : "Missing" }}</td>
+              <td>{{ toolResolvedPath("pecl") }}</td>
+              <td>{{ toolVersion("pecl") }}</td>
+            </tr>
+            <tr>
+              <td>php-imagick</td>
+              <td>{{ toolAvailable("imagick_ext") ? "Found" : "Missing" }}</td>
+              <td>{{ toolResolvedPath("imagick_ext") }}</td>
+              <td>{{ toolVersion("imagick_ext") }}</td>
+            </tr>
           </tbody>
         </table>
         <div v-if="!toolAvailable('exiftool')" class="tool-input">
@@ -223,6 +241,18 @@
           <label>
             gs full path
             <input v-model.trim="toolForm.gs" type="text" placeholder="/opt/homebrew/bin/gs" />
+          </label>
+        </div>
+        <div v-if="!toolAvailable('imagemagick')" class="tool-input">
+          <label>
+            imagemagick full path
+            <input v-model.trim="toolForm.imagemagick" type="text" placeholder="/usr/bin/magick" />
+          </label>
+        </div>
+        <div v-if="!toolAvailable('pecl')" class="tool-input">
+          <label>
+            pecl full path
+            <input v-model.trim="toolForm.pecl" type="text" placeholder="/usr/bin/pecl" />
           </label>
         </div>
         <div class="modal-actions">
@@ -565,7 +595,9 @@ export default {
         ffmpeg: "",
         ffprobe: "",
         soffice: "",
-        gs: ""
+        gs: "",
+        imagemagick: "",
+        pecl: ""
       },
       toolsError: "",
       jobsOpen: false,
@@ -621,6 +653,12 @@ export default {
       if (!tools.gs || tools.gs.available !== true) {
         warnings.push("Document thumbnail rendering disabled: ghostscript (gs) not found on server");
       }
+      if (!tools.imagemagick || tools.imagemagick.available !== true) {
+        warnings.push("Document thumbnail rendering fallback may fail: ImageMagick binary not found on server");
+      }
+      if (!tools.imagick_ext || tools.imagick_ext.available !== true) {
+        warnings.push("Document thumbnail rendering may fail: PHP imagick extension not loaded");
+      }
       return warnings;
     },
     hasToolPathInput() {
@@ -629,7 +667,9 @@ export default {
         this.toolAvailable("ffmpeg") &&
         this.toolAvailable("ffprobe") &&
         this.toolAvailable("soffice") &&
-        this.toolAvailable("gs")
+        this.toolAvailable("gs") &&
+        this.toolAvailable("imagemagick") &&
+        this.toolAvailable("pecl")
       ) {
         return false;
       }
@@ -646,6 +686,12 @@ export default {
         return true;
       }
       if (!this.toolAvailable("gs") && this.toolForm.gs) {
+        return true;
+      }
+      if (!this.toolAvailable("imagemagick") && this.toolForm.imagemagick) {
+        return true;
+      }
+      if (!this.toolAvailable("pecl") && this.toolForm.pecl) {
         return true;
       }
       return false;
@@ -778,14 +824,14 @@ export default {
     async openRequiredTools() {
       this.adminOpen = false;
       this.toolsError = "";
-      this.toolForm = { exiftool: "", ffmpeg: "", ffprobe: "", soffice: "", gs: "" };
+      this.toolForm = { exiftool: "", ffmpeg: "", ffprobe: "", soffice: "", gs: "", imagemagick: "", pecl: "" };
       await this.recheckSystemTools(true);
       this.toolsOpen = true;
     },
     closeRequiredTools() {
       this.toolsOpen = false;
       this.toolsError = "";
-      this.toolForm = { exiftool: "", ffmpeg: "", ffprobe: "", soffice: "", gs: "" };
+      this.toolForm = { exiftool: "", ffmpeg: "", ffprobe: "", soffice: "", gs: "", imagemagick: "", pecl: "" };
     },
     async saveRequiredTools() {
       if (!this.hasToolPathInput) {
@@ -810,6 +856,12 @@ export default {
         if (!this.toolAvailable("gs") && this.toolForm.gs) {
           payload.gs = this.toolForm.gs;
         }
+        if (!this.toolAvailable("imagemagick") && this.toolForm.imagemagick) {
+          payload.imagemagick = this.toolForm.imagemagick;
+        }
+        if (!this.toolAvailable("pecl") && this.toolForm.pecl) {
+          payload.pecl = this.toolForm.pecl;
+        }
         const res = await fetch("/api/admin/tools/configure", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -826,7 +878,7 @@ export default {
           return;
         }
         this.applyToolStatus(data);
-        this.toolForm = { exiftool: "", ffmpeg: "", ffprobe: "", soffice: "", gs: "" };
+        this.toolForm = { exiftool: "", ffmpeg: "", ffprobe: "", soffice: "", gs: "", imagemagick: "", pecl: "" };
       } catch (err) {
         this.toolsError = "Saving tool paths failed";
       } finally {
@@ -1814,11 +1866,19 @@ body {
   overflow: auto;
 }
 .tools-modal {
-  width: min(760px, 94vw);
+  width: min(1100px, 96vw);
+  max-height: 85vh;
+  overflow: auto;
 }
 
 .tools-table {
   margin-bottom: 12px;
+  table-layout: fixed;
+}
+
+.tools-table th,
+.tools-table td {
+  overflow-wrap: anywhere;
 }
 
 .tool-input {

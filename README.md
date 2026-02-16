@@ -4,7 +4,7 @@ Backend and frontend for browsing an indexer-produced SQLite database (read-only
 
 ## Release
 
-- Current version: `1.4.0`
+- Current version: `1.4.1`
 - See `CHANGELOG.md` for release notes.
 
 ## Backend
@@ -94,7 +94,7 @@ npm run build
 
 ## Config
 
-Set `WA_SQLITE_DB`, `WA_PHOTOS_ROOT`, `WA_THUMBS_ROOT`, `WA_TRASH_ROOT`, `WA_TRASH_THUMBS_ROOT`, `WA_THUMB_MAX`, `WA_THUMB_QUALITY`, `WA_EXIFTOOL_PATH`, `WA_FFMPEG_BIN`, `WA_FFPROBE_BIN`, `WA_SOFFICE_PATH`, `WA_GS_PATH` or edit `backend/config/config.php`.
+Set `WA_SQLITE_DB`, `WA_PHOTOS_ROOT`, `WA_THUMBS_ROOT`, `WA_TRASH_ROOT`, `WA_TRASH_THUMBS_ROOT`, `WA_THUMB_MAX`, `WA_THUMB_QUALITY`, `WA_EXIFTOOL_PATH`, `WA_FFMPEG_BIN`, `WA_FFPROBE_BIN`, `WA_SOFFICE_PATH`, `WA_GS_PATH`, `WA_IMAGEMAGICK_BIN`, `WA_PECL_BIN` or edit `backend/config/config.php`.
 
 Example:
 
@@ -111,17 +111,21 @@ export WA_FFMPEG_BIN="ffmpeg"
 export WA_FFPROBE_BIN="ffprobe"
 export WA_SOFFICE_PATH="soffice"
 export WA_GS_PATH="gs"
+export WA_IMAGEMAGICK_BIN="magick"
+export WA_PECL_BIN="pecl"
 ```
 
 
 ## System tool checks
 
-- On backend startup/first use, Webalbum checks `ffmpeg`, `ffprobe`, `exiftool`, `soffice`, and `gs` and caches the result in `backend/var/external_tools_status.json`.
+- On backend startup/first use, Webalbum checks `ffmpeg`, `ffprobe`, `exiftool`, `soffice`, `gs`, `imagemagick`, `pecl`, and `php-imagick` and caches the result in `backend/var/external_tools_status.json` (rechecked on admin login and when opening Required tools).
 - Tool checks are forced on every successful admin login.
 - Admin can inspect paths + versions + overrides from UI (`Admin ▾` -> `Required tools`) or API: `GET /api/admin/tools/status`.
 - Admin can set manual absolute tool paths via `POST /api/admin/tools/configure` and recheck via `POST /api/admin/tools/recheck`.
 - `soffice` is required for Office/TXT -> PDF conversions.
 - `gs` (Ghostscript) is required for PDF page rendering used by document thumbnails.
+- `imagemagick` + PHP `imagick` extension are required for reliable document thumbnail rendering on server workers.
+- `pecl` is checked for diagnostics/operations visibility; runtime conversion itself does not require `pecl`.
 
 
 ## Security notes
@@ -232,6 +236,13 @@ php backend/bin/path_guard_check.php
 This check verifies that an outside path such as `/etc/passwd` is rejected by the shared path guard used by file/thumb/download endpoints.
 
 
+## Worker files
+
+- `backend/bin/assets_worker.php`: background worker for `wa_jobs` (`doc_pdf_preview`, `doc_thumb`).
+- `backend/deploy/systemd/webalbum-assets-worker.service`: systemd service template (batch worker).
+- `backend/deploy/systemd/webalbum-assets-worker.timer`: systemd timer template.
+- `backend/deploy/systemd/assets-worker.env.example`: environment template for worker runtime.
+
 ## Documents & Audio Assets
 
 - Apply migration: `backend/sql/mysql/013_assets_and_jobs.sql`.
@@ -242,8 +253,18 @@ This check verifies that an outside path such as `/etc/passwd` is rejected by th
   - `Admin ▾ -> Assets` opens the Assets page (scan, job summary, filters, per-asset requeue).
 - Worker:
   - Run once: `php backend/bin/assets_worker.php --once`
-  - Run batch: `php backend/bin/assets_worker.php --max-jobs=200`
-  - Recommended: run from cron/systemd timer.
+  - Run batch: `php backend/bin/assets_worker.php --max-jobs=200` (now exits when queue is empty).
+  - Recommended: run via systemd timer.
+  - Files: `backend/deploy/systemd/webalbum-assets-worker.service`, `backend/deploy/systemd/webalbum-assets-worker.timer`, `backend/deploy/systemd/assets-worker.env.example`.
+  - Fedora setup:
+    - `sudo mkdir -p /etc/webalbum`
+    - `sudo cp backend/deploy/systemd/assets-worker.env.example /etc/webalbum/assets-worker.env`
+    - Edit `/etc/webalbum/assets-worker.env` with Fedora paths/DB credentials.
+    - `sudo cp backend/deploy/systemd/webalbum-assets-worker.service /etc/systemd/system/`
+    - `sudo cp backend/deploy/systemd/webalbum-assets-worker.timer /etc/systemd/system/`
+    - `sudo systemctl daemon-reload`
+    - `sudo systemctl enable --now webalbum-assets-worker.timer`
+    - Optional immediate run: `sudo systemctl start webalbum-assets-worker.service --no-block`
 - Viewer behavior:
   - Audio opens in an HTML5 audio player modal.
   - Documents open in PDF viewer modal (`/api/asset/view`).
@@ -254,3 +275,14 @@ This check verifies that an outside path such as `/etc/passwd` is rejected by th
   - Placeholder responses are never written as final derivative files.
 - Fedora/SELinux note:
   - Ensure Apache/PHP worker context can execute `soffice` and write to `WA_THUMBS_ROOT` (and tmp dir used by conversion).
+
+### ext filter sanity check
+
+Use this after login (cookie file already set) to verify `type=any + ext=pdf` returns assets-only rows:
+
+```bash
+curl -s -b /tmp/wa.cookies "http://localhost:5173/api/search" \
+  -H "Content-Type: application/json" \
+  --data '{"where":{"group":"ALL","items":[{"field":"ext","op":"is","value":"pdf"}]},"sort":{"field":"path","dir":"asc"},"limit":50,"offset":0}' |
+  php -r '''$d=json_decode(stream_get_contents(STDIN),true);$rows=$d["items"]??[];$bad=array_filter($rows,fn($r)=>(($r["entity"]??"")!=="asset"));echo "total=".count($rows)." non_asset=".count($bad).PHP_EOL;'''
+```

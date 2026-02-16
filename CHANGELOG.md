@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.4.1 - 2026-02-16
+
+- Fixed ambiguous duplicate results when filtering by `ext` (e.g. `pdf`) by treating extension-filtered searches as assets-only.
+- Added Required tools checks/display for `imagemagick`, `pecl`, and PHP `imagick` extension.
+- Added worker deployment templates under `backend/deploy/systemd` and documented Fedora timer/service setup.
+- Updated assets worker batch mode so `--max-jobs=N` exits cleanly when the queue is empty.
+
 ## 1.4.0 - 2026-02-16
 
 - Completed assets handling (video, documents) with Admin Assets workflow.

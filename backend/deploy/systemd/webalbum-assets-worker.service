@@ -1,0 +1,11 @@
+[Unit]
+Description=WebAlbum Assets Worker (batch)
+After=network.target
+
+[Service]
+Type=oneshot
+User=apache
+Group=apache
+WorkingDirectory=/var/www/webalbum
+EnvironmentFile=/etc/webalbum/assets-worker.env
+ExecStart=/usr/bin/php /var/www/webalbum/backend/bin/assets_worker.php --max-jobs=200
