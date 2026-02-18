@@ -287,6 +287,59 @@ final class TagsController
         }
     }
 
+    public function handleExportCsv(): void
+    {
+        try {
+            [$sqlite, $maria] = $this->connections(true);
+            if ($maria === null) {
+                $this->json(["error" => "MariaDB unavailable"], 500);
+                return;
+            }
+            $user = UserContext::currentUser($maria);
+            if ($user === null) {
+                $this->json(["error" => "Not authenticated"], 401);
+                return;
+            }
+            $isAdmin = (int)($user["is_admin"] ?? 0) === 1;
+            if (!$isAdmin) {
+                $this->json(["error" => "Forbidden"], 403);
+                return;
+            }
+
+            $rows = $this->fetchSqliteTagsForExport($sqlite);
+            $hiddenExpr = $this->hasGlobalHiddenColumn($maria) ? "is_hidden" : "0 AS is_hidden";
+            $prefRows = $maria->query("SELECT tag, " . $hiddenExpr . " FROM wa_tag_prefs_global");
+            $hiddenByTag = [];
+            foreach ($prefRows as $row) {
+                $hiddenByTag[(string)$row["tag"]] = (int)($row["is_hidden"] ?? 0);
+            }
+
+            $filename = "tags-export-" . date("Y-m-d-H-i") . ".csv";
+            http_response_code(200);
+            header("Content-Type: text/csv; charset=utf-8");
+            header("Content-Disposition: attachment; filename=\"" . $filename . "\"");
+            $out = fopen("php://output", "wb");
+            if ($out === false) {
+                throw new \RuntimeException("Failed to open CSV output stream");
+            }
+            fputcsv($out, ["tag name", "globally enabled", "number of images"], ",", "\"", "\\");
+            foreach ($rows as $row) {
+                $tag = (string)($row["tag"] ?? "");
+                $count = (int)($row["image_count"] ?? 0);
+                $enabled = (($hiddenByTag[$tag] ?? 0) === 1) ? 0 : 1;
+                fwrite($out, $this->csvQuote($tag) . "," . $enabled . "," . $count . "\n");
+            }
+            fclose($out);
+        } catch (\Throwable $e) {
+            $this->json(["error" => $e->getMessage()], 400);
+        }
+    }
+
+    private function csvQuote(string $value): string
+    {
+        return "\"" . str_replace("\"", "\"\"", $value) . "\"";
+    }
+
     private function connections(bool $requireMaria = false): array
     {
         $config = require $this->configPath;
@@ -390,6 +443,18 @@ final class TagsController
             "LIMIT " . (int)$limit . " OFFSET " . (int)$offset
         );
         return [$rows, (int)$total[0]["c"]];
+    }
+
+    private function fetchSqliteTagsForExport(SqliteIndex $db): array
+    {
+        return $db->query(
+            "SELECT t.tag, COUNT(DISTINCT ft.file_id) AS image_count\n" .
+            "FROM tags t\n" .
+            "JOIN file_tags ft ON ft.tag_id = t.id\n" .
+            "WHERE " . TagVisibility::suppressPeopleVariantSql("t") . "\n" .
+            "GROUP BY t.tag\n" .
+            "ORDER BY LOWER(t.tag) ASC"
+        );
     }
 
     private function fetchSqliteTagsByList(SqliteIndex $db, array $tags): array

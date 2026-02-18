@@ -4,7 +4,7 @@ Backend and frontend for browsing an indexer-produced SQLite database (read-only
 
 ## Release
 
-- Current version: `1.4.1`
+- Current version: `1.4.2`
 - See `CHANGELOG.md` for release notes.
 
 ## Backend
@@ -242,6 +242,17 @@ This check verifies that an outside path such as `/etc/passwd` is rejected by th
 - `backend/deploy/systemd/webalbum-assets-worker.service`: systemd service template (batch worker).
 - `backend/deploy/systemd/webalbum-assets-worker.timer`: systemd timer template.
 - `backend/deploy/systemd/assets-worker.env.example`: environment template for worker runtime.
+
+## Fedora deploy checklist
+
+After copying updated backend/frontend files on Fedora, run:
+
+```bash
+sudo restorecon -Rv /var/www/webalbum/backend
+sudo restorecon -Rv /var/www/webalbum/backend/public
+```
+
+This restores SELinux contexts for newly copied files and prevents runtime `500` errors caused by unlabeled PHP files.
 
 ## Documents & Audio Assets
 

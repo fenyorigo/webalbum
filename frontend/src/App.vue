@@ -3,7 +3,7 @@
     <nav class="top">
       <div class="brand">
         Family memories
-        <span class="version">v1.4.1</span>
+        <span class="version">v1.4.2</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>
@@ -16,6 +16,7 @@
             Admin ▾
           </button>
           <div v-if="adminOpen" class="admin-dropdown">
+            <button type="button" @click="openTagsAdmin">Tags</button>
             <button type="button" @click="openUserManagement">User management</button>
             <button type="button" @click="openLogs">View logs</button>
             <button type="button" @click="openTrash">Trash</button>
@@ -25,7 +26,6 @@
             <button type="button" @click="openRequiredTools">Required tools</button>
             <button type="button" @click="runCleanStructure">Clean structure</button>
             <button type="button" @click="runPurgePlaceholderThumbs">Purge placeholder thumbs</button>
-            <button type="button" @click="reenableAllTags">Re-enable all tags</button>
           </div>
         </div>
       </div>
@@ -922,6 +922,10 @@ export default {
       this.fetchLogs();
       this.logsOpen = true;
     },
+    openTagsAdmin() {
+      this.adminOpen = false;
+      this.$router.push("/tags");
+    },
     openTrash() {
       this.adminOpen = false;
       this.$router.push("/trash");
@@ -1113,31 +1117,6 @@ export default {
       this.jobsOpen = false;
       this.jobsError = "";
       this.jobsStatus = { counts: {}, recent_errors: [], running: [] };
-    },
-    async reenableAllTags() {
-      this.adminOpen = false;
-      if (!window.confirm("Re-enable all tags globally and for all users?")) {
-        return;
-      }
-      this.loading = true;
-      try {
-        const res = await fetch("/api/admin/tags/reenable-all", { method: "POST" });
-        if (res.status === 401 || res.status === 403) {
-          this.onAuthChanged({ detail: null });
-          this.$router.push("/login");
-          return;
-        }
-        const data = await res.json();
-        if (!res.ok) {
-          window.alert(data.error || "Failed to re-enable tags");
-          return;
-        }
-        window.alert("All tags are re-enabled.");
-      } catch (err) {
-        window.alert("Failed to re-enable tags");
-      } finally {
-        this.loading = false;
-      }
     },
     async runCleanStructure() {
       this.adminOpen = false;

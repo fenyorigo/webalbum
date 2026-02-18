@@ -143,6 +143,10 @@ if ($method === "POST" && $path === "/api/admin/tags/reenable-all") {
     (new TagsController($root . "/config/config.php"))->handleReenableAll();
     exit;
 }
+if ($method === "GET" && $path === "/api/admin/tags/export") {
+    (new TagsController($root . "/config/config.php"))->handleExportCsv();
+    exit;
+}
 if ($method === "GET" && $path === "/api/admin/assets") {
     (new AdminAssetsController($root . "/config/config.php"))->listAssets();
     exit;

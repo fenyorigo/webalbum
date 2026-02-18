@@ -20,6 +20,22 @@
           Reveal hidden tags
         </label>
         <button class="inline" :disabled="loading" @click="fetchTags">Refresh</button>
+        <button
+          v-if="isAdmin"
+          class="inline"
+          :disabled="loading"
+          @click="reenableAllTags"
+        >
+          Re-enable all tags
+        </button>
+        <button
+          v-if="isAdmin"
+          class="inline"
+          :disabled="loading"
+          @click="exportTagsCsv"
+        >
+          Export tags
+        </button>
         <button class="inline" :disabled="loading || !hasChanges" @click="saveAll">Save</button>
         <button class="inline" :disabled="loading" @click="cancelChanges">Cancel</button>
       </div>
@@ -251,6 +267,111 @@ export default {
         this.$router.push("/");
       } catch (err) {
         this.error = err.message || String(err);
+      } finally {
+        this.loading = false;
+      }
+    },
+    async reenableAllTags() {
+      if (!this.isAdmin) {
+        return;
+      }
+      if (!window.confirm("Re-enable all tags globally and for all users?")) {
+        return;
+      }
+      this.loading = true;
+      this.error = "";
+      try {
+        const res = await fetch("/api/admin/tags/reenable-all", { method: "POST" });
+        if (this.handleAuthError(res)) {
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          this.error = data.error || "Failed to re-enable tags";
+          return;
+        }
+        window.alert("All tags are re-enabled.");
+        this.page = 1;
+        await this.fetchTags();
+      } catch (err) {
+        this.error = err && err.message ? err.message : "Failed to re-enable tags";
+      } finally {
+        this.loading = false;
+      }
+    },
+    buildExportTagsFilename() {
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      return `tags-export-${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}-${pad(now.getMinutes())}.csv`;
+    },
+    parseFilenameFromContentDisposition(value) {
+      if (!value) {
+        return "";
+      }
+      const utf8Match = value.match(/filename\*=UTF-8''([^;]+)/i);
+      if (utf8Match && utf8Match[1]) {
+        try {
+          return decodeURIComponent(utf8Match[1].replace(/["']/g, "").trim());
+        } catch (_err) {
+          return utf8Match[1].replace(/["']/g, "").trim();
+        }
+      }
+      const plainMatch = value.match(/filename="?([^";]+)"?/i);
+      return plainMatch && plainMatch[1] ? plainMatch[1].trim() : "";
+    },
+    async exportTagsCsv() {
+      if (!this.isAdmin) {
+        return;
+      }
+      this.loading = true;
+      this.error = "";
+      try {
+        const suggestedName = this.buildExportTagsFilename();
+        const res = await fetch("/api/admin/tags/export");
+        if (this.handleAuthError(res)) {
+          return;
+        }
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          this.error = data.error || "Failed to export tags";
+          return;
+        }
+
+        const blob = await res.blob();
+        const headerName = this.parseFilenameFromContentDisposition(res.headers.get("Content-Disposition"));
+        const filename = headerName || suggestedName;
+        const hasPicker = typeof window.showSaveFilePicker === "function";
+
+        if (hasPicker) {
+          try {
+            const handle = await window.showSaveFilePicker({
+              suggestedName: filename,
+              startIn: "downloads",
+              types: [{ description: "CSV files", accept: { "text/csv": [".csv"] } }]
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            return;
+          } catch (err) {
+            if (!err || err.name !== "AbortError") {
+              // fallback to normal browser download
+            } else {
+              return;
+            }
+          }
+        }
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (_err) {
+        this.error = "Failed to export tags";
       } finally {
         this.loading = false;
       }

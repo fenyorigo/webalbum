@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.4.2 - 2026-02-18
+
+- Added Tags CSV export for admins with People/People|* tags excluded.
+- Moved tag export action to the Tags admin page and restored Tags in the Admin menu.
+- Moved "Re-enable all tags" from Admin dropdown into the Tags admin page.
+- Fixed tag export CSV formatting: no PHP deprecation output, always-quoted tag names, and Unix LF line breaks.
+
 ## 1.4.1 - 2026-02-16
 
 - Fixed ambiguous duplicate results when filtering by `ext` (e.g. `pdf`) by treating extension-filtered searches as assets-only.
