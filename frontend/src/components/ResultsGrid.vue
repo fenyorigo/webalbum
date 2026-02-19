@@ -43,6 +43,7 @@
         <button class="grid-name" type="button" :title="row.path" @click="$emit('open', row.id)">
           {{ fileName(row.path) }}
         </button>
+        <span class="grid-id">ID: {{ dbId(row) }}</span>
         <span class="grid-date" v-if="row.taken_ts">{{ formatTs(row.taken_ts) }}</span>
       </div>
       <div class="grid-actions">
@@ -86,12 +87,23 @@ export default {
     },
     markLoaded(event) {
       event.target.classList.add("loaded");
+    },
+    dbId(row) {
+      if (row && row.entity === "asset" && row.asset_id) {
+        return row.asset_id;
+      }
+      return row && row.id !== undefined ? row.id : "-";
     }
   }
 };
 </script>
 
 <style scoped>
+
+.grid-id {
+  color: #6f6556;
+  font-size: 12px;
+}
 .grid-actions {
   display: flex;
   justify-content: space-between;

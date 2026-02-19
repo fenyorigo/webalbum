@@ -52,6 +52,7 @@
           <button class="link text" type="button" @click="$emit('open', row.id)">
             {{ row.path }}
           </button>
+          <div class="item-id">ID: {{ dbId(row) }}</div>
           <button class="copy" type="button" @click="copyLink(row)">Copy</button>
         </td>
         <td>{{ row.type }}</td>
@@ -88,7 +89,21 @@ export default {
     },
     markLoaded(event) {
       event.target.classList.add("loaded");
+    },
+    dbId(row) {
+      if (row && row.entity === "asset" && row.asset_id) {
+        return row.asset_id;
+      }
+      return row && row.id !== undefined ? row.id : "-";
     }
   }
 };
 </script>
+
+<style scoped>
+.item-id {
+  color: #6f6556;
+  font-size: 12px;
+  margin-top: 2px;
+}
+</style>
