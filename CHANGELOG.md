@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.4.3 - 2026-02-19
+
+- Tags admin: added `Images` column showing per-tag image count.
+- Tags admin: added sorting for `Tag` and `Images` columns.
+
 ## 1.4.2 - 2026-02-18
 
 - Added Tags CSV export for admins with People/People|* tags excluded.

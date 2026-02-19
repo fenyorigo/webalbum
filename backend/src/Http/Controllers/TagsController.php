@@ -103,12 +103,14 @@ final class TagsController
             $q = $this->queryParam("q");
             $limit = $this->limitParam("limit", 50, 200);
             $offset = $this->offsetParam("offset");
+            $sortField = $this->sortFieldParam();
+            $sortDir = $this->sortDirParam();
 
             if ($isAdmin) {
-                [$rows, $total] = $this->fetchSqliteTagsPage($sqlite, $q, $limit, $offset);
+                [$rows, $total] = $this->fetchSqliteTagsPage($sqlite, $q, $limit, $offset, $sortField, $sortDir);
                 $merged = $this->mergeWithPrefs($rows, $maria, $userId, true);
             } else {
-                $rows = $this->fetchSqliteTagsForListAll($sqlite, $q);
+                $rows = $this->fetchSqliteTagsForListAll($sqlite, $q, $sortField, $sortDir);
                 $mergedAll = $this->mergeWithPrefs($rows, $maria, $userId, false);
                 $visible = array_values(array_filter($mergedAll, fn (array $row): bool => (int)$row["enabled_global"] === 1));
                 $total = count($visible);
@@ -387,33 +389,37 @@ final class TagsController
         );
     }
 
-    private function fetchSqliteTagsForListAll(SqliteIndex $db, ?string $q): array
+    private function fetchSqliteTagsForListAll(SqliteIndex $db, ?string $q, string $sortField = "tag", string $sortDir = "asc"): array
     {
         $visible = TagVisibility::suppressPeopleVariantSql("t");
+        $orderSql = $this->sqliteTagListOrderSql($sortField, $sortDir);
         if ($q !== null && $q !== "") {
             $like = self::escapeLike($q) . "%";
             return $db->query(
-                "SELECT t.tag, COUNT(*) AS variants\n" .
+                "SELECT t.tag, COUNT(DISTINCT t.id) AS variants, COUNT(DISTINCT ft.file_id) AS image_count\n" .
                 "FROM tags t\n" .
+                "LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
                 "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible . "\n" .
                 "GROUP BY t.tag\n" .
-                "ORDER BY LOWER(t.tag) ASC",
+                "ORDER BY " . $orderSql,
                 [$like]
             );
         }
 
         return $db->query(
-            "SELECT t.tag, COUNT(*) AS variants\n" .
+            "SELECT t.tag, COUNT(DISTINCT t.id) AS variants, COUNT(DISTINCT ft.file_id) AS image_count\n" .
             "FROM tags t\n" .
+            "LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
             "WHERE " . $visible . "\n" .
             "GROUP BY t.tag\n" .
-            "ORDER BY LOWER(t.tag) ASC"
+            "ORDER BY " . $orderSql
         );
     }
 
-    private function fetchSqliteTagsPage(SqliteIndex $db, ?string $q, int $limit, int $offset): array
+    private function fetchSqliteTagsPage(SqliteIndex $db, ?string $q, int $limit, int $offset, string $sortField = "tag", string $sortDir = "asc"): array
     {
         $visible = TagVisibility::suppressPeopleVariantSql("t");
+        $orderSql = $this->sqliteTagListOrderSql($sortField, $sortDir);
         if ($q !== null && $q !== "") {
             $like = self::escapeLike($q) . "%";
             $total = $db->query(
@@ -422,11 +428,12 @@ final class TagsController
                 [$like]
             );
             $rows = $db->query(
-                "SELECT t.tag, COUNT(*) AS variants\n" .
+                "SELECT t.tag, COUNT(DISTINCT t.id) AS variants, COUNT(DISTINCT ft.file_id) AS image_count\n" .
                 "FROM tags t\n" .
+                "LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
                 "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible . "\n" .
                 "GROUP BY t.tag\n" .
-                "ORDER BY LOWER(t.tag) ASC\n" .
+                "ORDER BY " . $orderSql . "\n" .
                 "LIMIT " . (int)$limit . " OFFSET " . (int)$offset,
                 [$like]
             );
@@ -435,11 +442,12 @@ final class TagsController
 
         $total = $db->query("SELECT COUNT(DISTINCT t.tag) AS c FROM tags t WHERE " . $visible);
         $rows = $db->query(
-            "SELECT t.tag, COUNT(*) AS variants\n" .
+            "SELECT t.tag, COUNT(DISTINCT t.id) AS variants, COUNT(DISTINCT ft.file_id) AS image_count\n" .
             "FROM tags t\n" .
+            "LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
             "WHERE " . $visible . "\n" .
             "GROUP BY t.tag\n" .
-            "ORDER BY LOWER(t.tag) ASC\n" .
+            "ORDER BY " . $orderSql . "\n" .
             "LIMIT " . (int)$limit . " OFFSET " . (int)$offset
         );
         return [$rows, (int)$total[0]["c"]];
@@ -504,6 +512,9 @@ final class TagsController
             }
             if (isset($mergedRow["variants"])) {
                 $mergedRow["variants"] = (int)$mergedRow["variants"];
+            }
+            if (isset($mergedRow["image_count"])) {
+                $mergedRow["image_count"] = (int)$mergedRow["image_count"];
             }
             $mergedRow["is_noise"] = (int)$pref["is_noise"];
             $mergedRow["pinned"] = (int)$pref["pinned"];
@@ -604,6 +615,27 @@ final class TagsController
             $this->globalHiddenColumn = false;
         }
         return $this->globalHiddenColumn;
+    }
+
+    private function sortFieldParam(): string
+    {
+        $field = strtolower(trim((string)($_GET["sort_field"] ?? "tag")));
+        return in_array($field, ["tag", "images"], true) ? $field : "tag";
+    }
+
+    private function sortDirParam(): string
+    {
+        $dir = strtolower(trim((string)($_GET["sort_dir"] ?? "asc")));
+        return $dir === "desc" ? "desc" : "asc";
+    }
+
+    private function sqliteTagListOrderSql(string $sortField, string $sortDir): string
+    {
+        $dir = $sortDir === "desc" ? "DESC" : "ASC";
+        if ($sortField === "images") {
+            return "image_count " . $dir . ", LOWER(t.tag) ASC";
+        }
+        return "LOWER(t.tag) " . $dir . ", image_count DESC";
     }
 
     private function sortTags(array &$rows): void

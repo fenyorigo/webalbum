@@ -64,8 +64,17 @@
       <table class="tags-table" v-if="rows.length">
         <thead>
           <tr>
-            <th>Tag</th>
+            <th>
+              <button type="button" class="sort-link" @click="toggleSort('tag')">
+                Tag {{ sortIndicator('tag') }}
+              </button>
+            </th>
             <th>Variants</th>
+            <th>
+              <button type="button" class="sort-link" @click="toggleSort('images')">
+                Images {{ sortIndicator('images') }}
+              </button>
+            </th>
             <th v-if="isAdmin">Enabled (Global)</th>
             <th>Enabled<span v-if="isAdmin"> (Personal)</span></th>
           </tr>
@@ -78,6 +87,7 @@
                 {{ variantsDots(row.variants) }}
               </span>
             </td>
+            <td>{{ row.image_count || 0 }}</td>
             <td v-if="isAdmin">
               <input type="checkbox" v-model="row.enabled_global" @change="markDirty(row, 'global')" />
             </td>
@@ -107,7 +117,9 @@ export default {
       dirty: {},
       original: {},
       isAdmin: false,
-      revealHidden: false
+      revealHidden: false,
+      sortField: "tag",
+      sortDir: "asc"
     };
   },
   mounted() {
@@ -141,6 +153,8 @@ export default {
         }
         qs.set("limit", String(this.limit));
         qs.set("offset", String(offset));
+        qs.set("sort_field", this.sortField);
+        qs.set("sort_dir", this.sortDir);
         const res = await fetch(`/api/tags/list?${qs.toString()}`);
         if (this.handleAuthError(res)) {
           return;
@@ -206,6 +220,22 @@ export default {
         return "IPTC keyword, XMP subject";
       }
       return "IPTC keyword";
+    },
+    sortIndicator(field) {
+      if (this.sortField !== field) {
+        return "";
+      }
+      return this.sortDir === "asc" ? "↑" : "↓";
+    },
+    toggleSort(field) {
+      if (this.sortField === field) {
+        this.sortDir = this.sortDir === "asc" ? "desc" : "asc";
+      } else {
+        this.sortField = field;
+        this.sortDir = field === "images" ? "desc" : "asc";
+      }
+      this.page = 1;
+      this.fetchTags();
     },
     async saveAll() {
       const tags = Object.keys(this.dirty);
@@ -429,3 +459,20 @@ export default {
   }
 };
 </script>
+
+
+<style scoped>
+.sort-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.sort-link:hover {
+  text-decoration: underline;
+}
+</style>
