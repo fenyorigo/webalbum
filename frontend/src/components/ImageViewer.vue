@@ -15,6 +15,17 @@
         <div class="viewer-count">{{ index + 1 }} / {{ results.length }}</div>
         <button class="viewer-btn" @click="copyLink" aria-label="Copy link">Copy link</button>
         <button class="viewer-btn" @click="downloadCurrent" aria-label="Download">Download</button>
+        <button v-if="canEditTags" class="viewer-btn" @click="rotateLeft" aria-label="Rotate counterclockwise">↺</button>
+        <button v-if="canEditTags" class="viewer-btn" @click="rotateRight" aria-label="Rotate clockwise">↻</button>
+        <button
+          v-if="canEditTags && pendingQuarterTurns !== 0"
+          class="viewer-btn"
+          :disabled="rotateSaving"
+          @click="saveRotation"
+          aria-label="Save rotation"
+        >
+          Save
+        </button>
         <button
           v-if="canEditTags"
           class="viewer-btn"
@@ -45,9 +56,10 @@
         <div class="viewer-media">
           <img
             v-if="current && current.type === 'image'"
-            :src="fileUrl(current.id)"
+            :src="currentImageSrc()"
             :alt="fileName(current.path)"
             class="viewer-img"
+            :style="mediaTransformStyle"
             @error="onMediaError"
           />
           <div v-else class="viewer-placeholder">Video preview not supported yet</div>
@@ -65,6 +77,7 @@
         {{ currentTags.join(", ") }}
       </div>
       <div v-if="mediaError" class="viewer-badge">{{ mediaError }}</div>
+      <div v-if="rotateSaving" class="viewer-badge">Saving rotation...</div>
       <div v-if="toast" class="viewer-inline-toast">{{ toast }}</div>
     </div>
 
@@ -133,7 +146,10 @@ export default {
       editLoading: false,
       suggestTimer: null,
       toast: "",
-      mediaError: ""
+      mediaError: "",
+      pendingQuarterTurns: 0,
+      rotateVersion: 0,
+      rotateSaving: false
     };
   },
   computed: {
@@ -152,6 +168,13 @@ export default {
     },
     canTrash() {
       return this.canEditTags;
+    },
+    mediaTransformStyle() {
+      const deg = this.pendingQuarterTurns * 90;
+      if (deg === 0) {
+        return null;
+      }
+      return { transform: `rotate(${deg}deg)` };
     }
   },
   watch: {
@@ -194,12 +217,17 @@ export default {
       }
     },
     index() {
+      this.pendingQuarterTurns = 0;
+      this.rotateVersion = 0;
       this.preloadNeighbors();
       this.fetchCurrentTags();
     }
   },
   methods: {
     close() {
+      this.pendingQuarterTurns = 0;
+      this.rotateVersion = 0;
+      this.rotateSaving = false;
       this.$emit("close");
     },
     setIndexFromId() {
@@ -219,6 +247,54 @@ export default {
     fileName(path) {
       const parts = path.split("/");
       return parts[parts.length - 1] || path;
+    },
+    currentImageSrc() {
+      if (!this.current) return "";
+      const base = this.fileUrl(this.current.id);
+      if (!this.rotateVersion) {
+        return base;
+      }
+      return `${base}${base.includes("?") ? "&" : "?"}v=${this.rotateVersion}`;
+    },
+    rotateLeft() {
+      this.pendingQuarterTurns -= 1;
+      if (this.pendingQuarterTurns < -3) {
+        this.pendingQuarterTurns += 4;
+      }
+    },
+    rotateRight() {
+      this.pendingQuarterTurns += 1;
+      if (this.pendingQuarterTurns > 3) {
+        this.pendingQuarterTurns -= 4;
+      }
+    },
+    async saveRotation() {
+      if (!this.current || this.pendingQuarterTurns === 0 || this.rotateSaving) {
+        return;
+      }
+      this.rotateSaving = true;
+      try {
+        const res = await fetch(`/api/media/${this.current.id}/rotate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quarter_turns: this.pendingQuarterTurns })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          this.toast = data.error || "Failed to rotate image";
+          return;
+        }
+        this.pendingQuarterTurns = 0;
+        this.rotateVersion = Date.now();
+        this.toast = "Rotation saved";
+        setTimeout(() => {
+          this.toast = "";
+        }, 2000);
+      } catch (_e) {
+        this.toast = "Failed to rotate image";
+      } finally {
+        this.rotateSaving = false;
+      }
     },
     copyLink() {
       if (!this.current) return;

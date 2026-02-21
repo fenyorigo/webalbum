@@ -24,6 +24,7 @@ use WebAlbum\Http\Controllers\TagsController;
 use WebAlbum\Http\Controllers\FileController;
 use WebAlbum\Http\Controllers\FileTagsController;
 use WebAlbum\Http\Controllers\MediaTagsController;
+use WebAlbum\Http\Controllers\MediaRotateController;
 use WebAlbum\Http\Controllers\VideoController;
 use WebAlbum\Http\Controllers\DownloadController;
 use WebAlbum\Http\Controllers\ThumbController;

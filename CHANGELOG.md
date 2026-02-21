@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.5.0 - 2026-02-19
+
+- Added rotate controls (clockwise/counterclockwise) in image and video viewer modals.
+- Added save rotation action for images and videos in viewer modals.
+- Added backend media rotate endpoint (`POST /api/media/{id}/rotate`) using ffmpeg.
+- Added progress/wait popup for video rotation while ffmpeg processing is running.
+
 ## 1.4.3 - 2026-02-19
 
 - Tags admin: added `Images` column showing per-tag image count.
