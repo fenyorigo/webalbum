@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.5.1 - 2026-02-21
+- Search merge now prefers MariaDB asset rows over SQLite `other` rows for asset-managed extensions (`pdf`, `txt`, `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, `mp3`, `m4a`, `flac`) to avoid duplicate/confusing results in `Type = Any`.
+- Fixed mixed-source preview behavior where some Office files opened through media rows and showed `Preview not supported for this file type`.
+
 ## 1.5.0 - 2026-02-19
 
 - Added rotate controls (clockwise/counterclockwise) in image and video viewer modals.

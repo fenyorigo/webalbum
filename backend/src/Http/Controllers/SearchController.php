@@ -75,7 +75,7 @@ final class SearchController
             }
 
             $assetResult = $this->searchAssetsOnly($maria, $sqlite, $query, null, []);
-            $merged = $this->mergeResultSets($mediaResult, $assetResult, $query);
+            $merged = $this->mergeResultSets($mediaResult, $assetResult, $query, (string)$config['photos']['root']);
             $this->json($merged);
         } catch (\JsonException $e) {
             $this->json(['error' => 'Invalid JSON'], 400);
@@ -262,12 +262,49 @@ final class SearchController
         ];
     }
 
-    private function mergeResultSets(array $media, array $assets, array $query): array
+    private function mergeResultSets(array $media, array $assets, array $query, string $photosRoot): array
     {
         $limit = (int)$query['limit'];
         $offset = (int)$query['offset'];
 
-        $combined = array_merge($media['items'] ?? [], $assets['items'] ?? []);
+        $assetPathSet = [];
+        foreach (($assets['items'] ?? []) as $row) {
+            $key = $this->normalizeRelPathForCompare((string)($row['path'] ?? ''), $photosRoot);
+            if ($key !== '') {
+                $assetPathSet[$key] = true;
+            }
+        }
+
+        $assetManagedExt = [
+            'pdf' => true,
+            'txt' => true,
+            'doc' => true,
+            'docx' => true,
+            'xls' => true,
+            'xlsx' => true,
+            'ppt' => true,
+            'pptx' => true,
+            'mp3' => true,
+            'm4a' => true,
+            'flac' => true,
+        ];
+
+        $mediaItems = [];
+        $droppedMedia = 0;
+        foreach (($media['items'] ?? []) as $row) {
+            $key = $this->normalizeRelPathForCompare((string)($row['path'] ?? ''), $photosRoot);
+            $ext = strtolower((string)pathinfo((string)($row['path'] ?? ''), PATHINFO_EXTENSION));
+            $isAssetManaged = isset($assetManagedExt[$ext]);
+            $isOtherType = strtolower((string)($row['type'] ?? '')) === 'other';
+
+            if (($key !== '' && isset($assetPathSet[$key])) || ($isOtherType && $isAssetManaged)) {
+                $droppedMedia += 1;
+                continue;
+            }
+            $mediaItems[] = $row;
+        }
+
+        $combined = array_merge($mediaItems, $assets['items'] ?? []);
         $sort = $query['sort'] ?? ['field' => 'path', 'dir' => 'asc'];
         $field = $sort['field'] ?? 'path';
         $dir = strtolower((string)($sort['dir'] ?? 'asc')) === 'desc' ? -1 : 1;
@@ -290,12 +327,31 @@ final class SearchController
 
         $paged = array_slice($combined, $offset, $limit);
 
+        $total = (int)($media['total'] ?? 0) + (int)($assets['total'] ?? 0) - $droppedMedia;
+        if ($total < count($combined)) {
+            $total = count($combined);
+        }
+
         return [
             'items' => array_values($paged),
-            'total' => (int)($media['total'] ?? 0) + (int)($assets['total'] ?? 0),
+            'total' => $total,
             'offset' => $offset,
             'limit' => $limit,
         ];
+    }
+
+
+    private function normalizeRelPathForCompare(string $path, string $photosRoot): string
+    {
+        $path = str_replace('\\', '/', trim($path));
+        $root = rtrim(str_replace('\\', '/', trim($photosRoot)), '/');
+        if ($path === '') {
+            return '';
+        }
+        if ($root !== '' && str_starts_with($path, $root . '/')) {
+            $path = substr($path, strlen($root) + 1);
+        }
+        return ltrim($path, '/');
     }
 
     private function extractRequestedType(array $group): ?string
