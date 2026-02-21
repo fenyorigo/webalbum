@@ -600,6 +600,7 @@ export default {
         pecl: ""
       },
       toolsError: "",
+      toolStatusLoaded: false,
       jobsOpen: false,
       jobsStatus: {
         counts: {},
@@ -639,6 +640,9 @@ export default {
       return Math.max(1, Math.ceil(this.logsTotal / this.logsPageSize));
     },
     toolWarnings() {
+      if (!this.toolStatusLoaded || !this.toolStatus) {
+        return [];
+      }
       const tools = this.toolStatus && this.toolStatus.tools ? this.toolStatus.tools : {};
       const warnings = [];
       if (!tools.ffmpeg || tools.ffmpeg.available !== true) {
@@ -770,10 +774,12 @@ export default {
           this.loadToolStatus();
         } else {
           this.toolStatus = null;
+          this.toolStatusLoaded = false;
         }
       } else {
         this.prefs = null;
         this.toolStatus = null;
+        this.toolStatusLoaded = false;
         window.__wa_prefs = null;
       }
     },
@@ -781,6 +787,7 @@ export default {
       this.adminOpen = !this.adminOpen;
     },
     async loadToolStatus() {
+      this.toolStatusLoaded = false;
       try {
         const res = await fetch("/api/admin/tools/status");
         if (res.status === 401 || res.status === 403) {
@@ -794,6 +801,8 @@ export default {
         this.applyToolStatus(data);
       } catch (err) {
         // ignore status errors
+      } finally {
+        this.toolStatusLoaded = true;
       }
     },
     applyToolStatus(data) {
