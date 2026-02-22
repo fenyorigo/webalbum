@@ -401,6 +401,7 @@ final class TagsController
                 "LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
                 "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible . "\n" .
                 "GROUP BY t.tag\n" .
+                "HAVING COUNT(DISTINCT ft.file_id) > 0\n" .
                 "ORDER BY " . $orderSql,
                 [$like]
             );
@@ -412,6 +413,7 @@ final class TagsController
             "LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
             "WHERE " . $visible . "\n" .
             "GROUP BY t.tag\n" .
+            "HAVING COUNT(DISTINCT ft.file_id) > 0\n" .
             "ORDER BY " . $orderSql
         );
     }
@@ -423,8 +425,15 @@ final class TagsController
         if ($q !== null && $q !== "") {
             $like = self::escapeLike($q) . "%";
             $total = $db->query(
-                "SELECT COUNT(DISTINCT t.tag) AS c FROM tags t\n" .
-                "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible,
+                "SELECT COUNT(*) AS c\n" .
+                "FROM (\n" .
+                "  SELECT t.tag\n" .
+                "  FROM tags t\n" .
+                "  LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
+                "  WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible . "\n" .
+                "  GROUP BY t.tag\n" .
+                "  HAVING COUNT(DISTINCT ft.file_id) > 0\n" .
+                ") s",
                 [$like]
             );
             $rows = $db->query(
@@ -433,6 +442,7 @@ final class TagsController
                 "LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
                 "WHERE t.tag LIKE ? ESCAPE '\\' COLLATE NOCASE AND " . $visible . "\n" .
                 "GROUP BY t.tag\n" .
+                "HAVING COUNT(DISTINCT ft.file_id) > 0\n" .
                 "ORDER BY " . $orderSql . "\n" .
                 "LIMIT " . (int)$limit . " OFFSET " . (int)$offset,
                 [$like]
@@ -440,13 +450,24 @@ final class TagsController
             return [$rows, (int)$total[0]["c"]];
         }
 
-        $total = $db->query("SELECT COUNT(DISTINCT t.tag) AS c FROM tags t WHERE " . $visible);
+        $total = $db->query(
+            "SELECT COUNT(*) AS c\n" .
+            "FROM (\n" .
+            "  SELECT t.tag\n" .
+            "  FROM tags t\n" .
+            "  LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
+            "  WHERE " . $visible . "\n" .
+            "  GROUP BY t.tag\n" .
+            "  HAVING COUNT(DISTINCT ft.file_id) > 0\n" .
+            ") s"
+        );
         $rows = $db->query(
             "SELECT t.tag, COUNT(DISTINCT t.id) AS variants, COUNT(DISTINCT ft.file_id) AS image_count\n" .
             "FROM tags t\n" .
             "LEFT JOIN file_tags ft ON ft.tag_id = t.id\n" .
             "WHERE " . $visible . "\n" .
             "GROUP BY t.tag\n" .
+            "HAVING COUNT(DISTINCT ft.file_id) > 0\n" .
             "ORDER BY " . $orderSql . "\n" .
             "LIMIT " . (int)$limit . " OFFSET " . (int)$offset
         );

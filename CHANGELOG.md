@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 1.5.2 - 2026-02-22
+- Tags admin list now excludes tags with zero linked images by default, aligning it with tag search/autocomplete behavior.
+
 ## 1.5.1 - 2026-02-21
 - Search merge now prefers MariaDB asset rows over SQLite `other` rows for asset-managed extensions (`pdf`, `txt`, `doc`, `docx`, `xls`, `xlsx`, `ppt`, `pptx`, `mp3`, `m4a`, `flac`) to avoid duplicate/confusing results in `Type = Any`.
 - Fixed mixed-source preview behavior where some Office files opened through media rows and showed `Preview not supported for this file type`.
