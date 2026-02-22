@@ -136,6 +136,10 @@ if ($method === "GET" && ($path === "/api/admin/audit-logs" || $path === "/api/a
     (new AuditLogController($root . "/config/config.php"))->list();
     exit;
 }
+if ($method === "GET" && ($path === "/api/admin/audit-logs/export" || $path === "/api/admin/logs/export")) {
+    (new AuditLogController($root . "/config/config.php"))->exportCsv();
+    exit;
+}
 if ($method === "GET" && $path === "/api/admin/audit-logs/meta") {
     (new AuditLogController($root . "/config/config.php"))->meta();
     exit;

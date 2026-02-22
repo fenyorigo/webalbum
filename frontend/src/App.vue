@@ -3,7 +3,7 @@
     <nav class="top">
       <div class="brand">
         Family memories
-        <span class="version">v1.5.1</span>
+        <span class="version">v1.5.3</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>
@@ -415,6 +415,7 @@
                 <option :value="100">100</option>
               </select>
             </label>
+            <button class="inline" type="button" @click="exportLogsCsv" :disabled="loading">Export logs (CSV)</button>
           </div>
         </div>
         <div class="logs-filters">
@@ -1244,34 +1245,40 @@ export default {
       this.detailsOpen = false;
       this.detailsRow = null;
     },
+    buildLogsQueryParams(includePagination = true) {
+      const qs = new URLSearchParams();
+      if (includePagination) {
+        qs.set("page", String(this.logsPage));
+        qs.set("page_size", String(this.logsPageSize));
+      }
+      if (this.logsFilters.action) {
+        qs.set("action", this.logsFilters.action);
+      }
+      if (this.logsFilters.source) {
+        qs.set("source", this.logsFilters.source);
+      }
+      if (this.logsMetaOk) {
+        if (this.logsFilters.actor_user_id) {
+          qs.set("actor_user_id", String(this.logsFilters.actor_user_id));
+        }
+        if (this.logsFilters.target_user_id) {
+          qs.set("target_user_id", String(this.logsFilters.target_user_id));
+        }
+      } else {
+        if (this.logsFilters.actor) {
+          qs.set("actor", this.logsFilters.actor);
+        }
+        if (this.logsFilters.target) {
+          qs.set("target", this.logsFilters.target);
+        }
+      }
+      return qs;
+    },
     async fetchLogs() {
       this.loading = true;
       this.logsError = "";
       try {
-        const qs = new URLSearchParams();
-        qs.set("page", String(this.logsPage));
-        qs.set("page_size", String(this.logsPageSize));
-        if (this.logsFilters.action) {
-          qs.set("action", this.logsFilters.action);
-        }
-        if (this.logsFilters.source) {
-          qs.set("source", this.logsFilters.source);
-        }
-        if (this.logsMetaOk) {
-          if (this.logsFilters.actor_user_id) {
-            qs.set("actor_user_id", String(this.logsFilters.actor_user_id));
-          }
-          if (this.logsFilters.target_user_id) {
-            qs.set("target_user_id", String(this.logsFilters.target_user_id));
-          }
-        } else {
-          if (this.logsFilters.actor) {
-            qs.set("actor", this.logsFilters.actor);
-          }
-          if (this.logsFilters.target) {
-            qs.set("target", this.logsFilters.target);
-          }
-        }
+        const qs = this.buildLogsQueryParams(true);
         const res = await fetch(`/api/admin/audit-logs?${qs.toString()}`);
         if (res.status === 401 || res.status === 403) {
           this.onAuthChanged({ detail: null });
@@ -1293,6 +1300,48 @@ export default {
         }
       } catch (err) {
         this.logsError = "Failed to load logs";
+      } finally {
+        this.loading = false;
+      }
+    },
+    async exportLogsCsv() {
+      this.loading = true;
+      this.logsError = "";
+      try {
+        const qs = this.buildLogsQueryParams(false);
+        const res = await fetch(`/api/admin/audit-logs/export?${qs.toString()}`);
+        if (res.status === 401 || res.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        if (!res.ok) {
+          let msg = "Failed to export logs";
+          try {
+            const data = await res.json();
+            if (data && data.error) {
+              msg = data.error;
+            }
+          } catch (err) {
+            // ignore parse errors
+          }
+          this.logsError = msg;
+          return;
+        }
+        const blob = await res.blob();
+        const cd = res.headers.get("content-disposition") || "";
+        const match = cd.match(/filename="?([^";]+)"?/i);
+        const filename = match && match[1] ? match[1] : "audit_logs.csv";
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        this.logsError = "Failed to export logs";
       } finally {
         this.loading = false;
       }

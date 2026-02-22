@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.5.3 - 2026-02-22
+- Added Admin audit log CSV export (`Export logs (CSV)`) with current filter support.
+- Added backend endpoint `GET /api/admin/audit-logs/export` (and `/api/admin/logs/export`) for admin-only CSV download.
+
 ## 1.5.2 - 2026-02-22
 - Tags admin list now excludes tags with zero linked images by default, aligning it with tag search/autocomplete behavior.
 

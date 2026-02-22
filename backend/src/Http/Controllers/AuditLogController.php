@@ -86,6 +86,99 @@ final class AuditLogController
         }
     }
 
+
+    public function exportCsv(): void
+    {
+        try {
+            $db = $this->connect();
+            $user = UserContext::currentUser($db);
+            if ($user === null) {
+                $this->json(["error" => "Not authenticated"], 401);
+                return;
+            }
+            if ((int)($user["is_admin"] ?? 0) !== 1) {
+                $this->json(["error" => "Forbidden"], 403);
+                return;
+            }
+
+            $filters = $this->filters();
+            $where = $filters["where"];
+            $params = $filters["params"];
+
+            $rows = $db->query(
+                "SELECT l.id, l.created_at, l.action, l.source, l.actor_user_id, l.target_user_id,\n" .
+                "l.ip_address, l.user_agent, l.details,\n" .
+                "a.username AS actor_username, a.display_name AS actor_display_name,\n" .
+                "t.username AS target_username, t.display_name AS target_display_name\n" .
+                "FROM wa_audit_log l\n" .
+                "LEFT JOIN wa_users a ON a.id = l.actor_user_id\n" .
+                "LEFT JOIN wa_users t ON t.id = l.target_user_id\n" .
+                $where . "\n" .
+                "ORDER BY l.created_at DESC, l.id DESC",
+                $params
+            );
+
+            $filename = 'audit_logs_' . date('Ymd_His') . '.csv';
+            http_response_code(200);
+            header('Content-Type: text/csv; charset=utf-8');
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            header('Cache-Control: no-store');
+
+            $out = fopen('php://output', 'w');
+            if ($out === false) {
+                return;
+            }
+
+            fputcsv($out, [
+                'id',
+                'created_at',
+                'action',
+                'source',
+                'actor_user_id',
+                'actor_username',
+                'actor_display_name',
+                'target_user_id',
+                'target_username',
+                'target_display_name',
+                'ip_address',
+                'user_agent',
+                'details',
+            ]);
+
+            foreach ($rows as $row) {
+                $source = isset($row['source']) && is_string($row['source'])
+                    ? $this->normalizeSource($row['source'])
+                    : '';
+                $details = '';
+                if (isset($row['details']) && $row['details'] !== null) {
+                    $details = is_string($row['details']) ? $row['details'] : json_encode($row['details']);
+                    if ($details === false) {
+                        $details = '';
+                    }
+                }
+
+                fputcsv($out, [
+                    (int)($row['id'] ?? 0),
+                    (string)($row['created_at'] ?? ''),
+                    (string)($row['action'] ?? ''),
+                    $source,
+                    $row['actor_user_id'] !== null ? (int)$row['actor_user_id'] : '',
+                    (string)($row['actor_username'] ?? ''),
+                    (string)($row['actor_display_name'] ?? ''),
+                    $row['target_user_id'] !== null ? (int)$row['target_user_id'] : '',
+                    (string)($row['target_username'] ?? ''),
+                    (string)($row['target_display_name'] ?? ''),
+                    (string)($row['ip_address'] ?? ''),
+                    (string)($row['user_agent'] ?? ''),
+                    $details,
+                ]);
+            }
+            fclose($out);
+        } catch (\Throwable $e) {
+            $this->json(["error" => $e->getMessage()], 500);
+        }
+    }
+
     public function meta(): void
     {
         try {
