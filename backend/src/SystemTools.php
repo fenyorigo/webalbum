@@ -16,15 +16,18 @@ final class SystemTools
             return self::$memory;
         }
 
+        $stamp = self::contextStamp();
         $cachePath = self::cachePath();
         if (!$force && is_file($cachePath)) {
             $raw = @file_get_contents($cachePath);
             if (is_string($raw) && $raw !== '') {
                 $decoded = json_decode($raw, true);
-                if (is_array($decoded) && isset($decoded['tools'])) {
+                if (is_array($decoded) && isset($decoded['tools']) && self::isStampMatch($decoded['stamp'] ?? null, $stamp)) {
                     self::$memory = $decoded;
                     return $decoded;
                 }
+                // Ignore stale cache from a different machine/environment.
+                @unlink($cachePath);
             }
         }
 
@@ -32,6 +35,7 @@ final class SystemTools
 
         $status = [
             'checked_at' => date('c'),
+            'stamp' => $stamp,
             'tools' => [],
             'overrides' => self::readOverrides(),
         ];
@@ -56,6 +60,14 @@ final class SystemTools
             'version' => is_string($imagickVersion) && $imagickVersion !== '' ? $imagickVersion : null,
         ];
 
+        $heic = self::imagemagickHeicSupport($status['tools']['imagemagick']['path'] ?? null);
+        $status['tools']['imagemagick_heic'] = [
+            'available' => $heic['available'],
+            'path' => $status['tools']['imagemagick']['path'] ?? null,
+            'configured' => 'ImageMagick HEIC delegate',
+            'version' => $heic['version'],
+        ];
+
         self::$memory = $status;
         self::writeJson($cachePath, $status);
         return $status;
@@ -75,7 +87,10 @@ final class SystemTools
             }
             $current[$tool] = $value;
         }
-        self::writeJson(self::overridePath(), $current);
+        self::writeJson(self::overridePath(), [
+            'stamp' => self::contextStamp(),
+            'overrides' => $current,
+        ]);
         self::clearCache();
         return $current;
     }
@@ -144,12 +159,23 @@ final class SystemTools
             return [];
         }
 
+        $stamp = self::contextStamp();
+        $source = $decoded;
+        if (array_key_exists('overrides', $decoded)) {
+            if (!self::isStampMatch($decoded['stamp'] ?? null, $stamp)) {
+                // Ignore stale overrides copied from a different machine/environment.
+                @unlink($path);
+                return [];
+            }
+            $source = is_array($decoded['overrides']) ? $decoded['overrides'] : [];
+        }
+
         $clean = [];
         foreach (self::BINARY_TOOLS as $tool) {
-            if (!isset($decoded[$tool])) {
+            if (!isset($source[$tool])) {
                 continue;
             }
-            $value = trim((string)$decoded[$tool]);
+            $value = trim((string)$source[$tool]);
             if ($value !== '') {
                 $clean[$tool] = $value;
             }
@@ -242,7 +268,12 @@ final class SystemTools
 
     private static function runCommand(array $args): ?string
     {
+        self::ensureSofficeRuntimeDirs();
         $cmd = implode(' ', array_map('escapeshellarg', $args));
+        $runtime = self::sofficeRuntimeEnvPrefix();
+        if ($runtime !== '') {
+            $cmd = $runtime . ' ' . $cmd;
+        }
         $out = @shell_exec($cmd . ' 2>&1');
         if (!is_string($out)) {
             return null;
@@ -258,5 +289,87 @@ final class SystemTools
         }
 
         @file_put_contents($path, json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+
+    private static function contextStamp(): array
+    {
+        $host = gethostname();
+        if (!is_string($host) || $host === '') {
+            $host = php_uname('n');
+        }
+        return [
+            'host' => (string)$host,
+            'os' => PHP_OS_FAMILY,
+            'sapi' => PHP_SAPI,
+            'code_root' => dirname(__DIR__),
+        ];
+    }
+
+    private static function isStampMatch(mixed $value, array $expected): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+        foreach ($expected as $key => $expectedValue) {
+            $actual = $value[$key] ?? null;
+            if (!is_string($actual) || $actual !== $expectedValue) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static function imagemagickHeicSupport(mixed $magickPath): array
+    {
+        $path = is_string($magickPath) ? trim($magickPath) : '';
+        if ($path === '') {
+            return ['available' => false, 'version' => null];
+        }
+        $out = self::runCommand([$path, '-list', 'format']);
+        if (!is_string($out) || $out === '') {
+            return ['available' => false, 'version' => null];
+        }
+        $line = null;
+        foreach (preg_split('/\R/', $out) as $candidate) {
+            if (!is_string($candidate)) {
+                continue;
+            }
+            $trimmed = trim($candidate);
+            if ($trimmed === '') {
+                continue;
+            }
+            if (preg_match('/\bHEIC\b/i', $trimmed)) {
+                $line = $trimmed;
+                break;
+            }
+        }
+        return ['available' => $line !== null, 'version' => $line];
+    }
+
+    private static function sofficeRuntimeEnvPrefix(): string
+    {
+        $base = dirname(__DIR__) . '/var/worker-home';
+        $cache = $base . '/.cache';
+        $config = $base . '/.config';
+        $tmp = dirname(__DIR__) . '/var/tmp';
+        return 'HOME=' . escapeshellarg($base)
+            . ' XDG_CACHE_HOME=' . escapeshellarg($cache)
+            . ' XDG_CONFIG_HOME=' . escapeshellarg($config)
+            . ' TMPDIR=' . escapeshellarg($tmp);
+    }
+
+    private static function ensureSofficeRuntimeDirs(): void
+    {
+        $paths = [
+            dirname(__DIR__) . '/var/worker-home',
+            dirname(__DIR__) . '/var/worker-home/.cache',
+            dirname(__DIR__) . '/var/worker-home/.config',
+            dirname(__DIR__) . '/var/tmp',
+        ];
+        foreach ($paths as $path) {
+            if (!is_dir($path)) {
+                @mkdir($path, 0775, true);
+            }
+        }
     }
 }

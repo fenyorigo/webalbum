@@ -62,7 +62,7 @@
             :style="mediaTransformStyle"
             @error="onMediaError"
           />
-          <div v-else class="viewer-placeholder">Video preview not supported yet</div>
+          <div v-else class="viewer-placeholder">Preview not supported for this file type</div>
         </div>
         <button
           class="nav-btn"
@@ -132,7 +132,7 @@ export default {
     fileUrl: { type: Function, required: true },
     currentUser: { type: Object, default: null }
   },
-  emits: ["close", "trashed"],
+  emits: ["close", "trashed", "open-asset", "open-video"],
   data() {
     return {
       index: 0,
@@ -235,14 +235,35 @@ export default {
       this.index = idx >= 0 ? idx : 0;
     },
     prev() {
-      if (this.index > 0) {
-        this.index -= 1;
+      if (this.index <= 0) {
+        return;
       }
+      this.navigateToIndex(this.index - 1);
     },
     next() {
-      if (this.index < this.results.length - 1) {
-        this.index += 1;
+      if (this.index >= this.results.length - 1) {
+        return;
       }
+      this.navigateToIndex(this.index + 1);
+    },
+    navigateToIndex(targetIndex) {
+      const row = this.results[targetIndex] || null;
+      if (!row) {
+        return;
+      }
+      if (row.type === "image") {
+        this.index = targetIndex;
+        return;
+      }
+      if (row.entity === "asset") {
+        this.$emit("open-asset", row);
+        return;
+      }
+      if (row.type === "video") {
+        this.$emit("open-video", row.id);
+        return;
+      }
+      this.showToast("Preview not supported for this file type");
     },
     fileName(path) {
       const parts = path.split("/");

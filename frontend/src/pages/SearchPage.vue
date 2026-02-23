@@ -296,19 +296,23 @@
       :results="results"
       :start-id="viewerStartId"
       :is-open="viewerOpen"
-       :file-url="fileUrl"
+      :file-url="fileUrl"
       :current-user="currentUser"
       @close="closeViewer"
       @trashed="onItemTrashed"
+      @open-asset="openAssetFromImageViewer"
+      @open-video="openVideoFromImageViewer"
     />
     <video-viewer
-      :results="results.filter((r) => r.type === 'video')"
+      :results="results"
       :start-id="videoViewerStartId"
       :is-open="videoViewerOpen"
-       :video-url="videoUrl"
+      :video-url="videoUrl"
       :current-user="currentUser"
       @close="closeVideoViewer"
       @trashed="onItemTrashed"
+      @open-asset="openAssetFromVideoViewer"
+      @open-image="openImageFromVideoViewer"
     />
     <div v-if="assetViewerOpen" class="modal-backdrop" @click.self="closeAssetViewer">
       <div class="modal asset-modal">
@@ -324,6 +328,8 @@
           <iframe :src="assetViewUrl(assetViewerRow)" title="Document preview"></iframe>
         </div>
         <div class="modal-actions">
+          <button class="inline" type="button" @click="assetPrev" :disabled="assetViewerIndex <= 0">Previous</button>
+          <button class="inline" type="button" @click="assetNext" :disabled="assetViewerIndex < 0 || assetViewerIndex >= results.length - 1">Next</button>
           <button class="inline" type="button" @click="openAssetOriginal">Download original</button>
         </div>
         <p v-if="assetViewerError" class="error">{{ assetViewerError }}</p>
@@ -420,6 +426,14 @@ export default {
       assetViewerRow: null,
       assetViewerError: ""
     };
+  },
+  computed: {
+    assetViewerIndex() {
+      if (!this.assetViewerRow) {
+        return -1;
+      }
+      return this.results.findIndex((r) => r.id === this.assetViewerRow.id);
+    }
   },
   mounted() {
     const prefs = window.__wa_prefs || null;
@@ -1245,6 +1259,81 @@ This is reversible from Admin -> Trash.`);
     },
     closeViewer() {
       this.viewerOpen = false;
+    },
+    openAssetFromImageViewer(row) {
+      if (!row) {
+        return;
+      }
+      this.viewerOpen = false;
+      this.videoViewerOpen = false;
+      this.assetViewerError = "";
+      this.assetViewerRow = row;
+      this.assetViewerOpen = true;
+    },
+    openVideoFromImageViewer(id) {
+      const targetId = Number(id || 0);
+      if (!targetId) {
+        return;
+      }
+      this.viewerOpen = false;
+      this.assetViewerOpen = false;
+      this.videoViewerStartId = targetId;
+      this.videoViewerOpen = true;
+    },
+    openAssetFromVideoViewer(row) {
+      if (!row) {
+        return;
+      }
+      this.videoViewerOpen = false;
+      this.viewerOpen = false;
+      this.assetViewerError = "";
+      this.assetViewerRow = row;
+      this.assetViewerOpen = true;
+    },
+    openImageFromVideoViewer(id) {
+      const targetId = Number(id || 0);
+      if (!targetId) {
+        return;
+      }
+      this.videoViewerOpen = false;
+      this.assetViewerOpen = false;
+      this.viewerStartId = targetId;
+      this.viewerOpen = true;
+    },
+    navigateFromAssetViewerIndex(targetIndex) {
+      const row = this.results[targetIndex] || null;
+      if (!row) {
+        return;
+      }
+      if (row.entity === "asset") {
+        this.assetViewerRow = row;
+        this.assetViewerError = "";
+        return;
+      }
+      this.assetViewerOpen = false;
+      if (row.type === "image") {
+        this.viewerStartId = row.id;
+        this.viewerOpen = true;
+        return;
+      }
+      if (row.type === "video") {
+        this.videoViewerStartId = row.id;
+        this.videoViewerOpen = true;
+        return;
+      }
+      this.showToast("Preview not supported for this file type");
+    },
+    assetPrev() {
+      if (this.assetViewerIndex <= 0) {
+        return;
+      }
+      this.navigateFromAssetViewerIndex(this.assetViewerIndex - 1);
+    },
+    assetNext() {
+      if (this.assetViewerIndex < 0 || this.assetViewerIndex >= this.results.length - 1) {
+        return;
+      }
+      this.navigateFromAssetViewerIndex(this.assetViewerIndex + 1);
     },
     closeVideoViewer() {
       this.videoViewerOpen = false;

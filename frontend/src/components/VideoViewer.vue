@@ -139,7 +139,7 @@ export default {
     videoUrl: { type: Function, required: true },
     currentUser: { type: Object, default: null }
   },
-  emits: ["close", "trashed"],
+  emits: ["close", "trashed", "open-asset", "open-image"],
   data() {
     return {
       index: 0,
@@ -240,24 +240,41 @@ export default {
       this.index = idx >= 0 ? idx : 0;
     },
     prev() {
-      if (this.index > 0) {
-        this.stopPlayback(true);
-        this.pendingQuarterTurns = 0;
-        this.rotateVersion = 0;
-        this.index -= 1;
-        this.loadCurrentVideo();
-        this.fetchCurrentTags();
+      if (this.index <= 0) {
+        return;
       }
+      this.navigateToIndex(this.index - 1);
     },
     next() {
-      if (this.index < this.results.length - 1) {
+      if (this.index >= this.results.length - 1) {
+        return;
+      }
+      this.navigateToIndex(this.index + 1);
+    },
+    navigateToIndex(targetIndex) {
+      const row = this.results[targetIndex] || null;
+      if (!row) {
+        return;
+      }
+      if (row.type === "video") {
         this.stopPlayback(true);
         this.pendingQuarterTurns = 0;
         this.rotateVersion = 0;
-        this.index += 1;
+        this.index = targetIndex;
         this.loadCurrentVideo();
         this.fetchCurrentTags();
+        return;
       }
+      this.stopPlayback(true);
+      if (row.entity === "asset") {
+        this.$emit("open-asset", row);
+        return;
+      }
+      if (row.type === "image") {
+        this.$emit("open-image", row.id);
+        return;
+      }
+      this.showToast("Preview not supported for this file type");
     },
     fileName(path) {
       const parts = path.split("/");

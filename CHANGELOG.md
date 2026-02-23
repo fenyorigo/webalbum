@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.5.4 - 2026-02-23
+- Added Required tools check for ImageMagick HEIC delegate support (`imagemagick-heic`) and warning when unavailable.
+- Increased Required tools modal width for better readability.
+- Added safer runtime env handling for tool checks (`HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `TMPDIR`) to avoid dconf cache permission warnings under Apache context.
+
 ## 1.5.3 - 2026-02-22
 - Added Admin audit log CSV export (`Export logs (CSV)`) with current filter support.
 - Added backend endpoint `GET /api/admin/audit-logs/export` (and `/api/admin/logs/export`) for admin-only CSV download.

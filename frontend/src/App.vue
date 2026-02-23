@@ -3,7 +3,7 @@
     <nav class="top">
       <div class="brand">
         Family memories
-        <span class="version">v1.5.3</span>
+        <span class="version">v1.5.4</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>
@@ -210,6 +210,12 @@
               <td>{{ toolAvailable("imagick_ext") ? "Found" : "Missing" }}</td>
               <td>{{ toolResolvedPath("imagick_ext") }}</td>
               <td>{{ toolVersion("imagick_ext") }}</td>
+            </tr>
+            <tr>
+              <td>imagemagick-heic</td>
+              <td>{{ toolAvailable("imagemagick_heic") ? "Found" : "Missing" }}</td>
+              <td>{{ toolResolvedPath("imagemagick_heic") }}</td>
+              <td>{{ toolVersion("imagemagick_heic") }}</td>
             </tr>
           </tbody>
         </table>
@@ -663,6 +669,9 @@ export default {
       }
       if (!tools.imagick_ext || tools.imagick_ext.available !== true) {
         warnings.push("Document thumbnail rendering may fail: PHP imagick extension not loaded");
+      }
+      if (!tools.imagemagick_heic || tools.imagemagick_heic.available !== true) {
+        warnings.push("HEIC thumbnails may fail: ImageMagick HEIC delegate not available");
       }
       return warnings;
     },
@@ -1903,7 +1912,8 @@ body {
   overflow: auto;
 }
 .tools-modal {
-  width: min(1100px, 96vw);
+  width: 75vw;
+  max-width: 75vw;
   max-height: 85vh;
   overflow: auto;
 }
@@ -2066,6 +2076,11 @@ body {
 .modal.logs-modal {
   width: 96vw;
   max-width: 1800px;
+}
+
+.modal.tools-modal {
+  width: 75vw;
+  max-width: 75vw;
 }
 
 .modal h3 {
