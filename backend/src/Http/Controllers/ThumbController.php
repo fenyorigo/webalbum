@@ -216,15 +216,19 @@ final class ThumbController
 
     private function serveThumb(string $thumb): void
     {
-        $etag = "\"" . md5((string)filemtime($thumb) . ":" . (string)filesize($thumb)) . "\"";
+        $mtime = (int)filemtime($thumb);
+        $size = (int)filesize($thumb);
+        $etag = "\"" . md5((string)$mtime . ":" . (string)$size) . "\"";
         header("Content-Type: image/jpeg");
-        header("Cache-Control: public, max-age=31536000");
+        header("Cache-Control: private, no-cache, must-revalidate, max-age=0");
+        header("Pragma: no-cache");
         header("ETag: " . $etag);
+        header("Last-Modified: " . gmdate("D, d M Y H:i:s", $mtime) . " GMT");
         if (isset($_SERVER["HTTP_IF_NONE_MATCH"]) && trim((string)$_SERVER["HTTP_IF_NONE_MATCH"]) === $etag) {
             http_response_code(304);
             return;
         }
-        header("Content-Length: " . (string)filesize($thumb));
+        header("Content-Length: " . (string)$size);
         readfile($thumb);
     }
 

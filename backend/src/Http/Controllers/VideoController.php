@@ -73,14 +73,23 @@ final class VideoController
             if ($size === false) {
                 throw new \RuntimeException("Unable to read file size");
             }
+            $mtime = (int)filemtime($path);
+            $etag = "\"" . md5((string)$mtime . ":" . (string)$size . ":" . $path) . "\"";
 
             header("Content-Type: " . $mime);
-            header("Cache-Control: private, max-age=3600");
+            header("Cache-Control: private, no-cache, must-revalidate, max-age=0");
+            header("Pragma: no-cache");
+            header("ETag: " . $etag);
+            header("Last-Modified: " . gmdate("D, d M Y H:i:s", $mtime) . " GMT");
             header("Accept-Ranges: bytes");
             header("Content-Disposition: inline; filename=\"" . basename($path) . "\"");
 
             $rangeHeader = $_SERVER["HTTP_RANGE"] ?? null;
             if (!is_string($rangeHeader) || $rangeHeader === "") {
+                if (isset($_SERVER["HTTP_IF_NONE_MATCH"]) && trim((string)$_SERVER["HTTP_IF_NONE_MATCH"]) === $etag) {
+                    http_response_code(304);
+                    return;
+                }
                 header("Content-Length: " . (string)$size);
                 $this->streamFile($path, 0, $size - 1);
                 return;

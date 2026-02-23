@@ -125,6 +125,63 @@ final class MaintenanceController
         }
     }
 
+    public function clearAllThumbs(): void
+    {
+        try {
+            [$config, $maria, $user] = $this->authAdmin();
+            if ($user === null) {
+                return;
+            }
+
+            $thumbsRoot = $this->validateRoot((string)($config['thumbs']['root'] ?? ''));
+            $deletedFiles = 0;
+            $deletedBytes = 0;
+            $failedDeletes = 0;
+            $failedExamples = [];
+
+            $it = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($thumbsRoot, \FilesystemIterator::SKIP_DOTS),
+                \RecursiveIteratorIterator::CHILD_FIRST
+            );
+
+            foreach ($it as $entry) {
+                /** @var \SplFileInfo $entry */
+                $path = $entry->getPathname();
+                if (!is_string($path) || $path === '' || is_link($path)) {
+                    continue;
+                }
+                if (!$entry->isFile()) {
+                    continue;
+                }
+                $size = (int)@filesize($path);
+                if (@unlink($path)) {
+                    $deletedFiles++;
+                    $deletedBytes += max(0, $size);
+                    continue;
+                }
+                $failedDeletes++;
+                if (count($failedExamples) < 50) {
+                    $failedExamples[] = $this->relativePath($thumbsRoot, $path);
+                }
+            }
+
+            $dirsReport = $this->cleanRootSimple($thumbsRoot);
+            $report = [
+                'root' => $thumbsRoot,
+                'deleted_files' => $deletedFiles,
+                'deleted_bytes' => $deletedBytes,
+                'deleted_dirs' => (int)($dirsReport['deleted'] ?? 0),
+                'failed_deletes' => $failedDeletes,
+                'failed_examples' => $failedExamples,
+            ];
+
+            $this->logAudit($maria, (int)$user['id'], 'maintenance_clear_all_thumbs', $report);
+            $this->json(['ok' => true, 'report' => $report]);
+        } catch (\Throwable $e) {
+            $this->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
     private function authAdmin(): array
     {
         $config = require $this->configPath;

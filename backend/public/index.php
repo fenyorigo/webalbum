@@ -60,6 +60,11 @@ session_set_cookie_params([
 ]);
 session_start();
 
+if ($method === "POST" && preg_match("#^/api/media/(\\d+)/rotate$#", $path, $m)) {
+    (new MediaRotateController($root . "/config/config.php"))->save((int)$m[1]);
+    exit;
+}
+
 if ($method === "GET" && !str_starts_with($path, "/api")) {
     $index = __DIR__ . "/dist/index.html";
     if (is_file($index)) {
@@ -231,6 +236,10 @@ if ($method === "POST" && $path === "/api/admin/maintenance/clean-structure") {
 }
 if ($method === "POST" && $path === "/api/admin/maintenance/purge-placeholder-thumbs") {
     (new MaintenanceController($root . "/config/config.php"))->purgePlaceholderThumbs();
+    exit;
+}
+if ($method === "POST" && $path === "/api/admin/maintenance/clear-all-thumbs") {
+    (new MaintenanceController($root . "/config/config.php"))->clearAllThumbs();
     exit;
 }
 if ($method === "GET" && $path === "/api/setup/status") {

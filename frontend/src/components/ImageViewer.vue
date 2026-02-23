@@ -132,7 +132,7 @@ export default {
     fileUrl: { type: Function, required: true },
     currentUser: { type: Object, default: null }
   },
-  emits: ["close", "trashed", "open-asset", "open-video"],
+  emits: ["close", "trashed", "open-asset", "open-video", "rotated"],
   data() {
     return {
       index: 0,
@@ -307,6 +307,7 @@ export default {
         }
         this.pendingQuarterTurns = 0;
         this.rotateVersion = Date.now();
+        this.$emit("rotated", { id: this.current.id, at: this.rotateVersion, type: "image" });
         this.toast = "Rotation saved";
         setTimeout(() => {
           this.toast = "";

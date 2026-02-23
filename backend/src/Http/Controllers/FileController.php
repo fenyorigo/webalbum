@@ -69,9 +69,19 @@ final class FileController
             }
 
             $mime = is_string($row["mime"]) && $row["mime"] !== "" ? $row["mime"] : $this->detectMime($path);
+            $mtime = (int)filemtime($path);
+            $size = (int)filesize($path);
+            $etag = "\"" . md5((string)$mtime . ":" . (string)$size . ":" . $path) . "\"";
             header("Content-Type: " . $mime);
-            header("Cache-Control: private, max-age=3600");
-            header("Content-Length: " . (string)filesize($path));
+            header("Cache-Control: private, no-cache, must-revalidate, max-age=0");
+            header("Pragma: no-cache");
+            header("ETag: " . $etag);
+            header("Last-Modified: " . gmdate("D, d M Y H:i:s", $mtime) . " GMT");
+            if (isset($_SERVER["HTTP_IF_NONE_MATCH"]) && trim((string)$_SERVER["HTTP_IF_NONE_MATCH"]) === $etag) {
+                http_response_code(304);
+                return;
+            }
+            header("Content-Length: " . (string)$size);
             header("Content-Disposition: inline; filename=\"" . basename($path) . "\"");
             readfile($path);
         } catch (\Throwable $e) {

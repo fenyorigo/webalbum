@@ -3,7 +3,7 @@
     <nav class="top">
       <div class="brand">
         Family memories
-        <span class="version">v1.5.4</span>
+        <span class="version">v1.5.5</span>
       </div>
       <div class="links" v-if="currentUser">
         <router-link to="/" class="link" active-class="active" exact-active-class="active">Search</router-link>
@@ -25,7 +25,7 @@
             <button type="button" @click="openJobStatus">Job status</button>
             <button type="button" @click="openRequiredTools">Required tools</button>
             <button type="button" @click="runCleanStructure">Clean structure</button>
-            <button type="button" @click="runPurgePlaceholderThumbs">Purge placeholder thumbs</button>
+            <button type="button" @click="openManageThumbs">Manage thumbs</button>
           </div>
         </div>
       </div>
@@ -267,6 +267,18 @@
           <button class="inline" @click="closeRequiredTools" :disabled="loading">Close</button>
         </div>
         <p v-if="toolsError" class="error">{{ toolsError }}</p>
+      </div>
+    </div>
+
+    <div v-if="manageThumbsOpen" class="modal-backdrop" @click.self="closeManageThumbs">
+      <div class="modal">
+        <h3>Manage thumbs</h3>
+        <p class="muted">Maintenance actions for <code>WA_THUMBS_ROOT</code>.</p>
+        <div class="modal-actions">
+          <button class="inline" @click="runPurgePlaceholderThumbs" :disabled="loading">Purge placeholder thumbs</button>
+          <button class="inline" @click="runClearAllThumbs" :disabled="loading">Clear all thumbs</button>
+          <button class="inline" @click="closeManageThumbs" :disabled="loading">Close</button>
+        </div>
       </div>
     </div>
 
@@ -608,6 +620,7 @@ export default {
       },
       toolsError: "",
       toolStatusLoaded: false,
+      manageThumbsOpen: false,
       jobsOpen: false,
       jobsStatus: {
         counts: {},
@@ -1137,6 +1150,16 @@ export default {
       this.jobsError = "";
       this.jobsStatus = { counts: {}, recent_errors: [], running: [] };
     },
+    openManageThumbs() {
+      this.adminOpen = false;
+      this.manageThumbsOpen = true;
+    },
+    closeManageThumbs() {
+      if (this.loading) {
+        return;
+      }
+      this.manageThumbsOpen = false;
+    },
     async runCleanStructure() {
       this.adminOpen = false;
       if (!window.confirm("Remove empty folders across photos/thumbs/trash roots?")) {
@@ -1241,6 +1264,39 @@ export default {
         );
       } catch (err) {
         window.alert("Placeholder purge failed");
+      } finally {
+        this.loading = false;
+      }
+    },
+    async runClearAllThumbs() {
+      this.adminOpen = false;
+      if (!window.confirm("Delete all thumbnail files under WA_THUMBS_ROOT?")) {
+        return;
+      }
+      if (!window.confirm("This cannot be undone. Continue?")) {
+        return;
+      }
+      this.loading = true;
+      try {
+        const res = await fetch("/api/admin/maintenance/clear-all-thumbs", {
+          method: "POST"
+        });
+        if (res.status === 401 || res.status === 403) {
+          this.onAuthChanged({ detail: null });
+          this.$router.push("/login");
+          return;
+        }
+        const data = await res.json();
+        if (!res.ok) {
+          window.alert(data.error || "Clear all thumbs failed");
+          return;
+        }
+        const report = data.report || {};
+        window.alert(
+          `Clear all thumbs complete\nDeleted files: ${Number(report.deleted_files || 0)}\nDeleted bytes: ${Number(report.deleted_bytes || 0)}\nDeleted dirs: ${Number(report.deleted_dirs || 0)}\nFailed deletes: ${Number(report.failed_deletes || 0)}`
+        );
+      } catch (_err) {
+        window.alert("Clear all thumbs failed");
       } finally {
         this.loading = false;
       }

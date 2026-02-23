@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.5.5 - 2026-02-23
+- Fixed image rotate persistence path end-to-end: added rotate route wiring in backend router and ensured requests hit authenticated rotate controller.
+- Hardened media rotation result consistency by normalizing image EXIF orientation after rotate and clearing video rotate metadata.
+- Improved rotated media freshness by cache-busting in search UI after save and by using revalidation cache headers on thumb/file/video endpoints.
+- Added Admin `Manage thumbs` action panel with `Purge placeholder thumbs` and new `Clear all thumbs` maintenance action.
+- Added backend endpoint `POST /api/admin/maintenance/clear-all-thumbs` with audit logging and summary report.
+
 ## 1.5.4 - 2026-02-23
 - Added Required tools check for ImageMagick HEIC delegate support (`imagemagick-heic`) and warning when unavailable.
 - Increased Required tools modal width for better readability.

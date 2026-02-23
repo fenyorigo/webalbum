@@ -86,8 +86,12 @@ final class MediaRotateController
                 throw new \RuntimeException('ffmpeg not available');
             }
             $ffmpeg = (string)$ffmpegTool['path'];
+            $exiftoolTool = $toolStatus['tools']['exiftool'] ?? ['available' => false, 'path' => null];
 
-            $tmp = $path . '.rotate.' . getmypid() . '.' . bin2hex(random_bytes(4));
+            $beforeStat = @stat($path) ?: null;
+            $beforeMtime = is_array($beforeStat) ? (int)($beforeStat['mtime'] ?? 0) : 0;
+            $beforeSize = is_array($beforeStat) ? (int)($beforeStat['size'] ?? 0) : 0;
+            $tmp = $this->tmpRotatePath($path);
             $filter = $this->rotationFilter($turns);
 
             try {
@@ -95,6 +99,7 @@ final class MediaRotateController
                 if (!is_file($tmp) || (int)@filesize($tmp) <= 0) {
                     throw new \RuntimeException('Rotation output is empty');
                 }
+                $this->preserveOwnershipAndMode($path, $tmp);
                 if (!@rename($tmp, $path)) {
                     throw new \RuntimeException('Failed to replace original file after rotation');
                 }
@@ -103,21 +108,57 @@ final class MediaRotateController
                     @unlink($tmp);
                 }
             }
+            $orientationFix = [
+                'attempted' => false,
+                'ok' => false,
+                'error' => '',
+            ];
+            if ($type === 'image') {
+                $orientationFix = $this->normalizeImageOrientationTag(
+                    $path,
+                    (bool)($exiftoolTool['available'] ?? false),
+                    is_string($exiftoolTool['path'] ?? null) ? (string)$exiftoolTool['path'] : 'exiftool'
+                );
+            }
+
+            clearstatcache(true, $path);
+            $afterStat = @stat($path) ?: null;
+            $afterMtime = is_array($afterStat) ? (int)($afterStat['mtime'] ?? 0) : 0;
+            $afterSize = is_array($afterStat) ? (int)($afterStat['size'] ?? 0) : 0;
 
             $thumbRoot = (string)($config['thumbs']['root'] ?? '');
             $relPath = (string)($row['rel_path'] ?? '');
+            $thumbDeleted = false;
             if ($thumbRoot !== '' && $relPath !== '') {
                 $thumbPath = ThumbPolicy::thumbPath($thumbRoot, $relPath);
                 if (is_string($thumbPath) && is_file($thumbPath)) {
-                    @unlink($thumbPath);
+                    $thumbDeleted = @unlink($thumbPath);
                 }
             }
+
+            $this->logRotate([
+                'file_id' => $id,
+                'type' => $type,
+                'path' => $path,
+                'before_mtime' => $beforeMtime,
+                'after_mtime' => $afterMtime,
+                'before_size' => $beforeSize,
+                'after_size' => $afterSize,
+                'thumb_deleted' => $thumbDeleted,
+                'orientation_fix_attempted' => (bool)$orientationFix['attempted'],
+                'orientation_fix_ok' => (bool)$orientationFix['ok'],
+                'orientation_fix_error' => (string)$orientationFix['error'],
+            ]);
 
             $this->json([
                 'ok' => true,
                 'id' => $id,
                 'type' => $type,
                 'quarter_turns' => $turns,
+                'before_mtime' => $beforeMtime,
+                'after_mtime' => $afterMtime,
+                'orientation_fix_attempted' => (bool)$orientationFix['attempted'],
+                'orientation_fix_ok' => (bool)$orientationFix['ok'],
             ]);
         } catch (\Throwable $e) {
             $this->json(['error' => $e->getMessage()], 500);
@@ -160,9 +201,10 @@ final class MediaRotateController
                 '-crf', '18',
                 '-c:a', 'copy',
                 '-movflags', '+faststart',
+                '-metadata:s:v:0', 'rotate=0',
             ]);
         } else {
-            $args = array_merge($args, ['-q:v', '2']);
+            $args = array_merge($args, ['-frames:v', '1', '-q:v', '2']);
         }
 
         $args[] = $dest;
@@ -213,6 +255,96 @@ final class MediaRotateController
         }
     }
 
+    private function normalizeImageOrientationTag(string $path, bool $available, string $binary): array
+    {
+        if (!$available) {
+            return [
+                'attempted' => false,
+                'ok' => false,
+                'error' => 'exiftool unavailable',
+            ];
+        }
+
+        $cmd = implode(' ', array_map('escapeshellarg', [
+            $binary !== '' ? $binary : 'exiftool',
+            '-overwrite_original',
+            '-P',
+            '-n',
+            '-Orientation#=1',
+            $path,
+        ]));
+
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 => ['pipe', 'w'],
+            2 => ['pipe', 'w'],
+        ];
+        $process = @proc_open($cmd, $descriptors, $pipes);
+        if (!is_resource($process)) {
+            return [
+                'attempted' => true,
+                'ok' => false,
+                'error' => 'failed to start exiftool',
+            ];
+        }
+
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exit = proc_close($process);
+        if ($exit !== 0) {
+            $msg = trim((string)$stderr !== '' ? (string)$stderr : (string)$stdout);
+            if ($msg === '') {
+                $msg = 'exiftool orientation update failed';
+            }
+            return [
+                'attempted' => true,
+                'ok' => false,
+                'error' => $msg,
+            ];
+        }
+
+        return [
+            'attempted' => true,
+            'ok' => true,
+            'error' => '',
+        ];
+    }
+
+    private function tmpRotatePath(string $path): string
+    {
+        $dir = dirname($path);
+        $name = pathinfo($path, PATHINFO_FILENAME);
+        $ext = strtolower((string)pathinfo($path, PATHINFO_EXTENSION));
+        $suffix = '.rotate.' . getmypid() . '.' . bin2hex(random_bytes(4));
+        if ($ext !== '') {
+            return $dir . DIRECTORY_SEPARATOR . $name . $suffix . '.' . $ext;
+        }
+        return $path . $suffix;
+    }
+
+    private function preserveOwnershipAndMode(string $source, string $dest): void
+    {
+        $sourceStat = @stat($source);
+        if (!is_array($sourceStat)) {
+            return;
+        }
+        $mode = (int)($sourceStat['mode'] ?? 0) & 0777;
+        if ($mode > 0) {
+            @chmod($dest, $mode);
+        }
+        if (function_exists('posix_geteuid') && (int)posix_geteuid() === 0) {
+            if (isset($sourceStat['uid'])) {
+                @chown($dest, (int)$sourceStat['uid']);
+            }
+            if (isset($sourceStat['gid'])) {
+                @chgrp($dest, (int)$sourceStat['gid']);
+            }
+        }
+    }
+
     private function resolveOriginalPath(string $path, string $relPath, string $photosRoot): ?string
     {
         if ($path !== '' && is_file($path)) {
@@ -247,5 +379,10 @@ final class MediaRotateController
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($payload);
+    }
+
+    private function logRotate(array $details): void
+    {
+        @error_log('webalbum_rotate ' . json_encode($details, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
     }
 }

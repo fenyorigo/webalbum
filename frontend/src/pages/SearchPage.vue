@@ -302,6 +302,7 @@
       @trashed="onItemTrashed"
       @open-asset="openAssetFromImageViewer"
       @open-video="openVideoFromImageViewer"
+      @rotated="onMediaRotated"
     />
     <video-viewer
       :results="results"
@@ -313,6 +314,7 @@
       @trashed="onItemTrashed"
       @open-asset="openAssetFromVideoViewer"
       @open-image="openImageFromVideoViewer"
+      @rotated="onMediaRotated"
     />
     <div v-if="assetViewerOpen" class="modal-backdrop" @click.self="closeAssetViewer">
       <div class="modal asset-modal">
@@ -424,7 +426,8 @@ export default {
       selectedFolder: null,
       assetViewerOpen: false,
       assetViewerRow: null,
-      assetViewerError: ""
+      assetViewerError: "",
+      mediaCacheBust: {}
     };
   },
   computed: {
@@ -1017,7 +1020,12 @@ export default {
       return d.toISOString().slice(0, 10);
     },
     fileUrl(id) {
-      return `${window.location.origin}/api/file?id=${id}`;
+      const base = `${window.location.origin}/api/file?id=${id}`;
+      const bust = this.mediaCacheBust[id];
+      if (!bust) {
+        return base;
+      }
+      return `${base}&v=${bust}`;
     },
     assetFileUrl(row) {
       if (!row || !row.asset_id) {
@@ -1032,7 +1040,12 @@ export default {
       return `${window.location.origin}/api/asset/view?id=${row.asset_id}`;
     },
     videoUrl(id) {
-      return `${window.location.origin}/api/video?id=${id}`;
+      const base = `${window.location.origin}/api/video?id=${id}`;
+      const bust = this.mediaCacheBust[id];
+      if (!bust) {
+        return base;
+      }
+      return `${base}&v=${bust}`;
     },
     thumbUrl(rowOrId) {
       const row = typeof rowOrId === "object" && rowOrId !== null
@@ -1045,7 +1058,12 @@ export default {
         return "";
       }
       const id = typeof rowOrId === "object" && rowOrId !== null ? rowOrId.id : rowOrId;
-      return `${window.location.origin}/api/thumb?id=${id}`;
+      const base = `${window.location.origin}/api/thumb?id=${id}`;
+      const bust = this.mediaCacheBust[id];
+      if (!bust) {
+        return base;
+      }
+      return `${base}&v=${bust}`;
     },
     fileName(path) {
       if (!path) {
@@ -1360,6 +1378,17 @@ This is reversible from Admin -> Trash.`);
       this.showToast("Moved to Trash");
       this.selectedIds = [];
       await this.runSearch();
+    },
+    onMediaRotated(payload) {
+      const id = Number(payload && payload.id ? payload.id : 0);
+      if (!id) {
+        return;
+      }
+      const stamp = Number(payload && payload.at ? payload.at : Date.now());
+      this.mediaCacheBust = {
+        ...this.mediaCacheBust,
+        [id]: stamp
+      };
     },
     sortDirLabel(dir) {
       if (this.form.sortField === "taken") {
