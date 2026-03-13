@@ -37,7 +37,7 @@
                 placeholder="Tag"
                 @focus="setActiveTag(idx)"
                 @input="onTagInput(idx)"
-                @keydown.enter.prevent="runSearch"
+                @keydown.enter.prevent="runSearch(true)"
               />
               <button type="button" class="tag-remove" @click="clearTagRow(idx)">✕</button>
             </div>
@@ -149,7 +149,7 @@
         </label>
       </div>
       <div class="row actions">
-        <button @click="runSearch" :disabled="loading">Search</button>
+        <button @click="runSearch(true)" :disabled="loading">Search</button>
         <span v-if="selectedFolder" class="pill folder-pill" :title="selectedFolder.rel_path">Folder: {{ selectedFolder.rel_path }}</span>
         <button v-if="selectedFolder" class="clear" type="button" @click="clearFolderFilter">Clear folder filter</button>
         <button @click="openSaveModal" :disabled="loading">Save search</button>
@@ -942,7 +942,10 @@ export default {
       this.form.tags[this.activeTagIndex].value = tag;
       this.suggestions = [];
     },
-    async runSearch() {
+    async runSearch(resetPage = false) {
+      if (resetPage) {
+        this.page = 1;
+      }
       this.loading = true;
       this.error = "";
       this.debugInfo = "";
@@ -1463,7 +1466,7 @@ This is reversible from Admin -> Trash.`);
       }
       const perPage = Math.max(1, Number(this.form.limit || 50));
       const currentPage = Math.max(1, Number(this.page || 1));
-      const start = ((currentPage - 1) * perPage) + 1;
+      const start = Math.min(((currentPage - 1) * perPage) + 1, total);
       const end = Math.min(currentPage * perPage, total);
       return `Results: ${start}-${end} of ${total} (${total} items)`;
     },

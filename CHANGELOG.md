@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.5.8 - 2026-03-13
+- Fixed mixed search pagination for page 2+ by applying the final page slice only after merging media and asset result sets.
+- Fixed manual search behavior to reset to page 1 and corrected invalid result summaries when narrowing a search from a later page.
+
 ## 1.5.7 - 2026-03-05
 - Multi-page TIFF/HEIC runtime handling added in viewer with per-page preview caching.
 
