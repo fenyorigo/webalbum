@@ -296,8 +296,18 @@ final class ThumbController
             return $this->generateVideoThumb($src, $dest, $max, $quality, $config);
         }
         if (class_exists(\Imagick::class)) {
-            $this->generateThumbImagick($src, $dest, $max, $quality);
-            return ["engine" => "imagick", "exit_code" => 0];
+            try {
+                $this->generateThumbImagick($src, $dest, $max, $quality);
+                return ["engine" => "imagick", "exit_code" => 0];
+            } catch (\Throwable $e) {
+                $this->generateThumbGd($src, $dest, $max, $quality);
+                return [
+                    "engine" => "gd",
+                    "exit_code" => 0,
+                    "fallback_from" => "imagick",
+                    "fallback_reason" => $e->getMessage(),
+                ];
+            }
         }
         $this->generateThumbGd($src, $dest, $max, $quality);
         return ["engine" => "gd", "exit_code" => 0];
